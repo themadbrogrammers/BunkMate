@@ -1,0 +1,99 @@
+name: bunkmate
+description: "Attendance. But smarter."
+publish_to: 'none'
+version: 1.1.5+15
+
+environment:
+  sdk: ^3.8.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  provider: ^6.1.2             # For managing app-wide state like the theme
+  shared_preferences: ^2.2.3   # To save user settings (like theme, load preference)
+  flutter_svg: ^2.0.10+1         # For a few of the icons (like the theme toggle)
+  percent_indicator: ^4.2.3    # For the progress bars and circular result
+  lottie: ^3.1.2               # For the animated Lottie files in the modals
+  sensors_plus: ^7.0.0
+  url_launcher: ^6.3.0         # For opening privacy/terms links
+  file_picker: ^8.0.3           # For picking files (replaces <input type="file">)
+  excel: ^4.0.0
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  path_provider: ^2.0.11 # For finding save location
+  permission_handler: ^11.0.0 # For requesting storage permissions (Android/iOS)
+  path: ^1.9.0
+  intl: ^0.19.0
+  fl_chart: ^0.68.0
+  clipboard: ^0.1.3
+  fluttertoast: ^9.0.0
+  package_info_plus: ^9.0.0
+  flutter_local_notifications: ^17.2.1
+  workmanager: ^0.6.0
+  firebase_core: ^3.1.1
+  firebase_remote_config: ^5.0.1
+  syncfusion_flutter_gauges: ^25.2.7
+
+
+  # The following adds the Cupertino Icons font to your application.
+  # Use with the CupertinoIcons class for iOS style icons.
+  cupertino_icons: ^1.0.8
+  google_mobile_ads: ^6.0.0
+  purchases_flutter: ^9.12.3
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  hive_generator: ^2.0.0
+  build_runner: ^2.3.3
+  flutter_launcher_icons: ^0.13.1
+  flutter_native_splash: ^2.4.0
+
+  flutter_lints: ^5.0.0
+
+# For information on the generic Dart part of this file, see the
+# following page: https://dart.dev/tools/pub/pubspec
+
+flutter_launcher_icons:
+  android: true # Enable Android icon generation
+  ios: true     # Enable iOS icon generation
+  image_path: "assets/icon/app_icon_square.png" # Path to a standard square icon (used for fallback/iOS)
+  adaptive_icon_foreground: "assets/icon/hands_foreground.png" # Path to your TRANSPARENT hands PNG
+  adaptive_icon_background: "#FFFFFF" # Default background (e.g., white)
+  # You might need monochrome icons for Android 13+ themed icons
+  # monochrome: "assets/icon/hands_monochrome.png"
+  
+# The following section is specific to Flutter packages.
+flutter:
+
+  uses-material-design: true
+
+  assets:
+    - assets/animations/
+    - assets/success.json
+    - assets/doomd.json
+    - assets/warn.json
+
+flutter_native_splash:
+  # Color must match your Flutter splash screen's background for smooth transition
+  color: "#F9FAFB" # Light mode background (e.g., bg-gray-50)
+  color_dark: "#0D1117" # Dark mode background
+
+  image: assets/splash/splash_logo.png # Use a version suitable for splash (maybe simpler)
+  image_dark: assets/splash/splash_logo.png # Optional: Different icon for dark mode
+
+  # Android 12+ specific settings (optional but recommended)
+  android_12:
+    color: "#F9FAFB"
+    color_dark: "#0D1117"
+    image: assets/splash/splash_logo.png
+    image_dark: assets/splash/splash_logo.png
+    # icon_background_color: "#FFFFFF" # Optional background behind icon on Android 12+
+    # icon_background_color_dark: "#333333"
+
+  # Other optional settings:
+  fullscreen: true # Hides status bar
+  # android_gravity: center
+  # ios_content_mode: scaleAspectFit
