@@ -53,3 +53,4 @@ build/
 .metadata
 
 lib/secrets.dart
+android/app/google-services.json
