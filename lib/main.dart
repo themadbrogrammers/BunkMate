@@ -19,6 +19,9 @@ import 'package:bunkmate/providers/settings_provider.dart';
 import 'package:bunkmate/providers/theme_provider.dart';
 import 'package:bunkmate/providers/premium_provider.dart';
 
+import 'package:bunkmate/models/gpa_models.dart';
+import 'package:bunkmate/providers/gpa_provider.dart';
+
 // Screens
 // import 'package:bunkmate/screens/main_screen.dart';
 
@@ -37,6 +40,9 @@ import 'package:bunkmate/navigation/route_observer.dart';
 // import 'package:bunkmate/models/schedule_entry.dart';
 import 'package:flutter/services.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
+
+import 'package:flutter_displaymode/flutter_displaymode.dart';
+import 'dart:io' show Platform;
 
 /// =======================================================
 /// BACKGROUND TASK — FAST, LIGHTWEIGHT ALERTS
@@ -68,7 +74,15 @@ void callbackDispatcher() {
 
       final schedule = HiveService.getSchedule();
       final today = DateTime.now().weekday;
-      final todaysClasses = schedule.where((e) => e.dayOfWeek == today).length;
+      final todaysEntries = schedule
+          .where((e) => e.dayOfWeek == today)
+          .toList();
+      final todaysClasses = todaysEntries.length;
+
+      final todaysHours = todaysEntries.fold<int>(
+        0,
+        (sum, e) => sum + e.durationHours,
+      );
 
       if (todaysClasses == 0) {
         if (Hive.isBoxOpen('schedule')) await Hive.close();
@@ -97,21 +111,23 @@ void callbackDispatcher() {
 
       if (required > 0) {
         body =
-            "$todaysClasses classes today. You must attend $required consecutive classes.";
+            "$todaysClasses classes ($todaysHours hrs) today. You must attend $required consecutive hours.";
       } else {
-        final afterSkipBuffer = buffer - todaysClasses;
+        // ✨ CRITICAL FIX: Subtract the HOURS from the buffer, not the classes!
+        final afterSkipBuffer = buffer - todaysHours;
 
         if (afterSkipBuffer < 0) {
           body =
-              "$todaysClasses classes today. 🚫 Do NOT bunk today or you'll fall below safe attendance.";
+              "$todaysClasses classes ($todaysHours hrs) today. 🚫 Do NOT bunk today or you'll fall below safe attendance.";
         } else if (afterSkipBuffer == 0) {
           body =
-              "$todaysClasses classes today. ⚠️ Skipping all leaves ZERO buffer.";
-        } else if (afterSkipBuffer >= todaysClasses) {
-          body = "$todaysClasses classes today. ✅ You can safely bunk today.";
+              "$todaysClasses classes ($todaysHours hrs) today. ⚠️ Skipping all leaves ZERO buffer.";
+        } else if (afterSkipBuffer >= todaysHours) {
+          body =
+              "$todaysClasses classes ($todaysHours hrs) today. ✅ You can safely bunk today.";
         } else {
           body =
-              "$todaysClasses classes today. Skipping all leaves $afterSkipBuffer safe skips.";
+              "$todaysClasses classes ($todaysHours hrs) today. Skipping all leaves $afterSkipBuffer safe skips.";
         }
       }
 
@@ -184,6 +200,15 @@ void _bootstrapAdsFromRemoteConfig() {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  if (Platform.isAndroid) {
+    try {
+      await FlutterDisplayMode.setHighRefreshRate();
+      debugPrint("High Refresh Rate Enabled 🚀");
+    } catch (e) {
+      debugPrint('High refresh rate not supported on this device: $e');
+    }
+  }
+
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   try {
@@ -191,12 +216,6 @@ Future<void> main() async {
     await Purchases.configure(
       PurchasesConfiguration("goog_KbCKzQPsACvgXDDrJEWPYDzmZkw"),
     );
-    // final customerInfo = await Purchases.getCustomerInfo();
-    // print("RC: entitlements = ${customerInfo.entitlements.all}");
-    // print(
-    //   "RC: transactions = ${customerInfo.nonSubscriptionTransactions.length}",
-    // );
-    // debugPrint("🚀 MY REVENUECAT USER ID: ${customerInfo.originalAppUserId}");
   } catch (e) {
     debugPrint("RevenueCat Init Error: $e");
   }
@@ -204,6 +223,9 @@ Future<void> main() async {
   final prefs = await SharedPreferences.getInstance();
 
   final appDir = await getApplicationDocumentsDirectory();
+  Hive.init(appDir.path);
+  Hive.registerAdapter(CourseAdapter());
+  Hive.registerAdapter(SemesterAdapter());
   await HiveService.init(appDir.path);
 
   await RemoteConfigService.instance.init();
@@ -218,6 +240,7 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => AttendanceProvider()),
         ChangeNotifierProvider(create: (_) => PremiumProvider()..load()),
         ChangeNotifierProvider(create: (_) => AdProvider(prefs: prefs)),
+        ChangeNotifierProvider(create: (_) => GpaProvider()),
       ],
       child: const AttendanceAlchemistApp(),
     ),
