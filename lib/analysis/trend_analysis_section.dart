@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -8,7 +7,7 @@ import 'package:fl_chart/fl_chart.dart';
 
 import 'package:bunkmate/providers/attendance_provider.dart';
 import 'package:bunkmate/providers/ad_provider.dart';
-import 'package:bunkmate/providers/premium_provider.dart'; // ✨ IMPORT ADDED
+import 'package:bunkmate/providers/premium_provider.dart';
 import 'package:bunkmate/widgets/custom_card.dart';
 import 'package:bunkmate/helpers/ad_helper.dart';
 
@@ -33,20 +32,27 @@ class TrendAnalysisSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AttendanceProvider>();
-    final premium = context.watch<PremiumProvider>(); // ✨ WATCH PREMIUM STATUS
+    final premium = context.watch<PremiumProvider>();
+    final adProvider = context.watch<AdProvider>();
     final theme = Theme.of(context);
 
     final canShowTrend = provider.result.subjectStats.values.any(
       (s) => s.absences.isNotEmpty,
     );
 
-    // ✨ PASS PREMIUM STATUS DOWN
+    // ✨ Determine the lock state before building the UI!
+    final bool isLocked =
+        canShowTrend &&
+        !premium.isPremium &&
+        !adProvider.isAbsenceTrendUnlocked;
+
     return _buildTrendAnalysisSection(
       context,
       provider,
       theme,
       canShowTrend,
       premium.isPremium,
+      isLocked,
     );
   }
 
@@ -103,7 +109,8 @@ class TrendAnalysisSection extends StatelessWidget {
     AttendanceProvider provider,
     ThemeData theme,
     bool canShowTrend,
-    bool isPremium, // ✨ ACCEPT PREMIUM STATUS
+    bool isPremium,
+    bool isLocked,
   ) {
     String? trendInsight;
     IconData? trendInsightIcon;
@@ -138,6 +145,7 @@ class TrendAnalysisSection extends StatelessWidget {
 
     List<AbsenceRecord> allAbsences = [];
     Map<String, double> monthlyAbsences = {};
+    List<MapEntry<String, double>> sortedMonthlyEntries = [];
 
     if (canShowTrend) {
       allAbsences =
@@ -151,27 +159,28 @@ class TrendAnalysisSection extends StatelessWidget {
         final sevenDaysAgo = todayStart.subtract(const Duration(days: 7));
         final thirtyDaysAgo = todayStart.subtract(const Duration(days: 30));
 
-        final absencesToday = allAbsences
+        int absencesToday = allAbsences
             .where((a) => !a.date.isBefore(todayStart))
             .length;
-        final absencesYesterday = allAbsences
+        int absencesYesterday = allAbsences
             .where(
               (a) =>
                   !a.date.isBefore(yesterdayStart) &&
                   a.date.isBefore(todayStart),
             )
             .length;
-        final absencesLast7Days = allAbsences
+        int absencesLast7Days = allAbsences
             .where((a) => a.date.isAfter(sevenDaysAgo))
             .length;
-        final absencesLast30Days = allAbsences
+        int absencesLast30Days = allAbsences
             .where((a) => a.date.isAfter(thirtyDaysAgo))
             .length;
 
         Map<int, int> dayCounts = {};
-        allAbsences.forEach((a) {
+        for (var a in allAbsences) {
           dayCounts[a.date.weekday] = (dayCounts[a.date.weekday] ?? 0) + 1;
-        });
+        }
+
         var sortedDays = dayCounts.entries.toList()
           ..sort((a, b) => b.value.compareTo(a.value));
         String mostMissedDay = sortedDays.isNotEmpty
@@ -246,74 +255,101 @@ class TrendAnalysisSection extends StatelessWidget {
           trendInsightIcon = Icons.trending_up_rounded;
         }
 
+        // ✨ TEASE DATA FOR LOCKED USERS
+        if (isLocked) {
+          mostMissedDay = "•••";
+          avgTimeBetween = "•••";
+          longestStreak = max(
+            longestStreak,
+            3,
+          ); // Force it to show the danger streak
+          trendInsight = "Hidden patterns detected in your attendance.";
+          trendInsightIcon = Icons.lock_outline_rounded;
+        }
+
         insightsWidget = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.only(top: 16.0),
-              child: GridView.count(
-                crossAxisCount: 2,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                childAspectRatio: 1.5,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
+              padding: const EdgeInsets.only(top: 8.0),
+              child: Column(
                 children: [
-                  _buildRecencyInsight(
-                    theme,
-                    "Today",
-                    absencesToday,
-                    errorColor,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildRecencyInsight(
+                          theme,
+                          "Today",
+                          isLocked ? "?" : absencesToday.toString(),
+                          errorColor,
+                          isLocked ? true : absencesToday > 0,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildRecencyInsight(
+                          theme,
+                          "Yesterday",
+                          isLocked ? "?" : absencesYesterday.toString(),
+                          errorColor.withOpacity(0.8),
+                          isLocked ? true : absencesYesterday > 0,
+                        ),
+                      ),
+                    ],
                   ),
-                  _buildRecencyInsight(
-                    theme,
-                    "Yesterday",
-                    absencesYesterday,
-                    errorColor.withOpacity(0.8),
-                  ),
-                  _buildRecencyInsight(
-                    theme,
-                    "7 Days",
-                    absencesLast7Days,
-                    primaryColor,
-                  ),
-                  _buildRecencyInsight(
-                    theme,
-                    "30 Days",
-                    absencesLast30Days,
-                    Colors.purpleAccent,
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildRecencyInsight(
+                          theme,
+                          "7 Days",
+                          isLocked ? "?" : absencesLast7Days.toString(),
+                          primaryColor,
+                          isLocked ? true : absencesLast7Days > 0,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildRecencyInsight(
+                          theme,
+                          "30 Days",
+                          isLocked ? "?" : absencesLast30Days.toString(),
+                          Colors.purpleAccent,
+                          isLocked ? true : absencesLast30Days > 0,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.only(top: 6.0),
-              child: Column(
-                children: [
+            const SizedBox(height: 16),
+            Column(
+              children: [
+                _buildTrendInsightItem(
+                  theme,
+                  Icons.calendar_today_rounded,
+                  "Peak Absence Day",
+                  mostMissedDay,
+                  Colors.orangeAccent,
+                ),
+                _buildTrendInsightItem(
+                  theme,
+                  Icons.timer_rounded,
+                  "Absence Frequency",
+                  avgTimeBetween,
+                  Colors.blueAccent,
+                ),
+                if (longestStreak > 1)
                   _buildTrendInsightItem(
                     theme,
-                    Icons.calendar_today_rounded,
-                    "Peak Absence Day",
-                    mostMissedDay,
-                    Colors.orangeAccent,
+                    Icons.local_fire_department_rounded,
+                    "Danger Streak",
+                    isLocked ? "••• Days" : "$longestStreak Days",
+                    errorColor,
                   ),
-                  _buildTrendInsightItem(
-                    theme,
-                    Icons.timer_rounded,
-                    "Absence Frequency",
-                    avgTimeBetween,
-                    Colors.blueAccent,
-                  ),
-                  if (longestStreak > 1)
-                    _buildTrendInsightItem(
-                      theme,
-                      Icons.local_fire_department_rounded,
-                      "Danger Streak",
-                      "$longestStreak Days",
-                      errorColor,
-                    ),
-                ],
-              ),
+              ],
             ),
           ],
         );
@@ -327,9 +363,23 @@ class TrendAnalysisSection extends StatelessWidget {
           6: 0,
           7: 0,
         };
-        for (var absence in allAbsences) {
-          dayOfWeekHours[absence.date.weekday] =
-              (dayOfWeekHours[absence.date.weekday] ?? 0) + absence.hours;
+
+        // ✨ THE CHART TEASE: Inject gorgeous dummy data if locked
+        if (isLocked) {
+          dayOfWeekHours = {
+            1: 1.5,
+            2: 5.0,
+            3: 2.0,
+            4: 4.5,
+            5: 1.0,
+            6: 0.0,
+            7: 0.0,
+          };
+        } else {
+          for (var absence in allAbsences) {
+            dayOfWeekHours[absence.date.weekday] =
+                (dayOfWeekHours[absence.date.weekday] ?? 0) + absence.hours;
+          }
         }
 
         final maxDayHours = dayOfWeekHours.values.isEmpty
@@ -451,15 +501,16 @@ class TrendAnalysisSection extends StatelessWidget {
                       ),
                     ),
                   ],
-                  showingTooltipIndicators: [],
                 );
               }).toList(),
+              // ✨ FIX: Light mode contrast fix for BarChart tooltips
               barTouchData: BarTouchData(
-                enabled: true,
+                enabled: !isLocked,
                 handleBuiltInTouches: true,
                 touchTooltipData: BarTouchTooltipData(
-                  getTooltipColor: (group) =>
-                      theme.colorScheme.surface.withOpacity(0.95),
+                  getTooltipColor: (group) => isLightMode
+                      ? Colors.black87
+                      : theme.colorScheme.surface.withOpacity(0.95),
                   tooltipPadding: const EdgeInsets.symmetric(
                     horizontal: 16,
                     vertical: 10,
@@ -484,7 +535,7 @@ class TrendAnalysisSection extends StatelessWidget {
                     return BarTooltipItem(
                       '$dayName\n',
                       TextStyle(
-                        color: theme.hintColor,
+                        color: isLightMode ? Colors.white70 : theme.hintColor,
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
                       ),
@@ -492,7 +543,7 @@ class TrendAnalysisSection extends StatelessWidget {
                         TextSpan(
                           text: '${hours.toStringAsFixed(1)} hrs',
                           style: TextStyle(
-                            color: color,
+                            color: isLightMode ? Colors.white : color,
                             fontSize: 14,
                             fontWeight: FontWeight.w900,
                             letterSpacing: 0.5,
@@ -509,31 +560,40 @@ class TrendAnalysisSection extends StatelessWidget {
           ),
         );
 
-        var groupedByMonth = groupBy(
-          allAbsences,
-          (AbsenceRecord r) => DateFormat('yyyy-MM').format(r.date),
-        );
-        groupedByMonth.forEach((month, records) {
-          monthlyAbsences[month] = records.map((r) => r.hours).sum;
-        });
+        if (isLocked) {
+          // ✨ Dummy Trajectory Data
+          sortedMonthlyEntries = [
+            const MapEntry("2026-01", 3.0),
+            const MapEntry("2026-02", 9.0),
+            const MapEntry("2026-03", 5.0),
+          ];
+          monthlyAbsences = Map.fromEntries(sortedMonthlyEntries);
+        } else {
+          var groupedByMonth = groupBy(
+            allAbsences,
+            (AbsenceRecord r) => DateFormat('yyyy-MM').format(r.date),
+          );
+          groupedByMonth.forEach((month, records) {
+            monthlyAbsences[month] = records.map((r) => r.hours).sum;
+          });
+          sortedMonthlyEntries = monthlyAbsences.entries.toList()
+            ..sort((a, b) => a.key.compareTo(b.key));
+        }
 
-        final sortedMonthlyEntries = monthlyAbsences.entries.toList()
-          ..sort((a, b) => a.key.compareTo(b.key));
-
-        if (monthlyAbsences.length >= 2) {
+        if (monthlyAbsences.length >= 2 || isLocked) {
           final spots = sortedMonthlyEntries
               .mapIndexed((i, e) => FlSpot(i.toDouble(), e.value))
               .toList();
           final rawMaxY = monthlyAbsences.isEmpty
               ? 10.0
               : monthlyAbsences.values.reduce(max);
-          final maxYLimit = (rawMaxY * 1.3).ceilToDouble().clamp(
+          final maxYLimit2 = (rawMaxY * 1.3).ceilToDouble().clamp(
             5.0,
             double.infinity,
           );
-          final intervalY = (maxYLimit / 4).clamp(
+          final intervalY = (maxYLimit2 / 4).clamp(
             1.0,
-            maxYLimit > 0 ? maxYLimit : 1.0,
+            maxYLimit2 > 0 ? maxYLimit2 : 1.0,
           );
 
           theActualMonthlyChart = SizedBox(
@@ -618,7 +678,7 @@ class TrendAnalysisSection extends StatelessWidget {
                   double.infinity,
                 ),
                 minY: 0,
-                maxY: maxYLimit,
+                maxY: maxYLimit2,
                 lineBarsData: [
                   LineChartBarData(
                     spots: spots,
@@ -661,8 +721,9 @@ class TrendAnalysisSection extends StatelessWidget {
                     ),
                   ),
                 ],
+                // ✨ FIX: Light mode contrast fix for LineChart tooltips
                 lineTouchData: LineTouchData(
-                  enabled: true,
+                  enabled: !isLocked,
                   handleBuiltInTouches: true,
                   getTouchedSpotIndicator: (barData, spotIndexes) {
                     return spotIndexes.map((index) {
@@ -686,8 +747,9 @@ class TrendAnalysisSection extends StatelessWidget {
                     }).toList();
                   },
                   touchTooltipData: LineTouchTooltipData(
-                    getTooltipColor: (spot) =>
-                        theme.colorScheme.surface.withOpacity(0.95),
+                    getTooltipColor: (spot) => isLightMode
+                        ? Colors.black87
+                        : theme.colorScheme.surface.withOpacity(0.95),
                     tooltipPadding: const EdgeInsets.symmetric(
                       horizontal: 16,
                       vertical: 10,
@@ -709,7 +771,9 @@ class TrendAnalysisSection extends StatelessWidget {
                             return LineTooltipItem(
                               '$formattedMonth\n',
                               TextStyle(
-                                color: theme.hintColor,
+                                color: isLightMode
+                                    ? Colors.white70
+                                    : theme.hintColor,
                                 fontSize: 12,
                                 fontWeight: FontWeight.w500,
                               ),
@@ -717,7 +781,9 @@ class TrendAnalysisSection extends StatelessWidget {
                                 TextSpan(
                                   text: '${hours.toStringAsFixed(1)} hrs',
                                   style: TextStyle(
-                                    color: primaryColor,
+                                    color: isLightMode
+                                        ? Colors.white
+                                        : primaryColor,
                                     fontSize: 14,
                                     fontWeight: FontWeight.w900,
                                     letterSpacing: 0.5,
@@ -732,7 +798,7 @@ class TrendAnalysisSection extends StatelessWidget {
                   ),
                 ),
               ),
-              duration: const Duration(milliseconds: 800),
+              duration: Duration(milliseconds: 800),
               curve: Curves.easeOutQuint,
             ),
           );
@@ -836,65 +902,29 @@ class TrendAnalysisSection extends StatelessWidget {
               ),
               child: insightsWidget,
             ),
-
-            Consumer<AdProvider>(
-              builder: (context, adProvider, _) {
-                if (!canShowTrend ||
-                    allAbsences.isEmpty ||
-                    adProvider.trendHintShown) {
-                  return const SizedBox.shrink();
-                }
-
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  context.read<AdProvider>().markTrendHintShown();
-                });
-
-                return Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                  child: Text(
-                    'Patterns below are based on your recorded absences.',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.hintColor,
-                      fontStyle: FontStyle.italic,
+            if (trendInsight != null && !isLocked)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      trendInsightIcon,
+                      size: 18,
+                      color: theme.colorScheme.primary,
                     ),
-                  ),
-                );
-              },
-            ),
-
-            Consumer<AdProvider>(
-              builder: (context, adProvider, _) {
-                // ✨ FIX: Allow if premium!
-                if (trendInsight == null ||
-                    (!isPremium && !adProvider.isAbsenceTrendUnlocked)) {
-                  return const SizedBox.shrink();
-                }
-
-                return Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        trendInsightIcon,
-                        size: 18,
-                        color: theme.colorScheme.primary,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          trendInsight!,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        trendInsight!,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                    ],
-                  ),
-                );
-              },
-            ),
-
+                    ),
+                  ],
+                ),
+              ),
             if (canShowTrend && allAbsences.isNotEmpty) ...[
               const SizedBox(height: 16),
               _buildModernHeader(theme, "📅 Weekly Distribution"),
@@ -913,29 +943,41 @@ class TrendAnalysisSection extends StatelessWidget {
       ),
     );
 
-    return Consumer<AdProvider>(
-      builder: (context, adProvider, child) {
-        // ✨ THE ULTIMATE FIX: If they are Premium, bypass the lock entirely!
-        if (!canShowTrend || isPremium || adProvider.isAbsenceTrendUnlocked) {
-          return child!;
-        }
-
-        return Stack(
-          alignment: Alignment.center,
-          children: [
-            ImageFiltered(
-              imageFilter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
-              child: AbsorbPointer(child: child),
+    // ✨ THE FLAWLESS, JITTER-FREE OVERLAY & PROPERLY CENTERED CTA
+    if (isLocked) {
+      return Stack(
+        alignment: Alignment.center,
+        children: [
+          AbsorbPointer(child: trendContent),
+          Positioned.fill(
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    theme.scaffoldBackgroundColor.withOpacity(0.0),
+                    theme.scaffoldBackgroundColor.withOpacity(0.85),
+                    theme.scaffoldBackgroundColor.withOpacity(1.0),
+                  ],
+                  stops: const [0.35, 0.7, 1.0],
+                ),
+              ),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 40.0),
+          ),
+          Positioned(
+            bottom: 80,
+            left: 0,
+            right: 0,
+            child: Center(
               child: UnlockTrendCTA(
                 onPressed: () {
                   _showRewardedAdDialog(
                     context: context,
                     title: 'Your Personal Absence Insights',
                     content:
-                        'Unlock absence trends and patterns from your attendance history for this session.',
+                        'Unlock absence trends and patterns from your attendance history for whole an hour.😎',
                     onReward: () {
                       context.read<AdProvider>().unlockAbsenceTrendForOneHour();
                     },
@@ -943,11 +985,12 @@ class TrendAnalysisSection extends StatelessWidget {
                 },
               ),
             ),
-          ],
-        );
-      },
-      child: trendContent,
-    );
+          ),
+        ],
+      );
+    }
+
+    return trendContent;
   }
 
   Widget _buildModernHeader(ThemeData theme, String title) {
@@ -967,15 +1010,16 @@ class TrendAnalysisSection extends StatelessWidget {
   Widget _buildRecencyInsight(
     ThemeData theme,
     String label,
-    int count,
+    String value,
     Color baseColor,
+    bool hasAbsences,
   ) {
-    final bool hasAbsences = count > 0;
     final Color color = hasAbsences
         ? baseColor
         : theme.hintColor.withOpacity(0.5);
 
     return Container(
+      padding: const EdgeInsets.symmetric(vertical: 16),
       decoration: BoxDecoration(
         color: color.withOpacity(0.08),
         borderRadius: BorderRadius.circular(20),
@@ -985,7 +1029,7 @@ class TrendAnalysisSection extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(
-            count.toString(),
+            value,
             style: theme.textTheme.headlineMedium?.copyWith(
               fontWeight: FontWeight.bold,
               color: color,
@@ -1093,7 +1137,7 @@ class _UnlockTrendCTAState extends State<UnlockTrendCTA>
             borderRadius: BorderRadius.circular(24),
             onTap: widget.onPressed,
             child: Ink(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
@@ -1125,7 +1169,6 @@ class _UnlockTrendCTAState extends State<UnlockTrendCTA>
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      // ✨ UPDATED TEXT TO HINT AT PRO
                       Text(
                         'Watch an ad • Or unlock Pro 👑',
                         style: TextStyle(

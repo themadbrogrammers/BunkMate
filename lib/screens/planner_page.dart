@@ -1,7 +1,10 @@
-import 'dart:ui' as dart_ui; // ✨ NEEDED FOR FROSTED GLASS
+import 'dart:ui' as dart_ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
+import 'package:collection/collection.dart'; // ✨ For firstWhereOrNull
+
 import 'package:bunkmate/providers/attendance_provider.dart';
 import 'package:bunkmate/providers/ad_provider.dart';
 import 'package:bunkmate/providers/premium_provider.dart';
@@ -16,6 +19,7 @@ import 'package:bunkmate/planner/planner_sections.dart';
 import 'package:bunkmate/navigation/route_observer.dart';
 import 'package:bunkmate/widgets/native_ad_card.dart';
 import 'package:bunkmate/helpers/button_color_extensions.dart';
+import 'package:bunkmate/models/schedule_entry.dart';
 
 class PlannerPage extends StatefulWidget {
   const PlannerPage({super.key});
@@ -30,6 +34,8 @@ class PlannerPageState extends State<PlannerPage>
   bool _projectionPulse = false;
   String? _lastProjectionSignature;
   int _plannerInteractions = 0;
+
+  final GlobalKey _whatIfKey = GlobalKey();
 
   @override
   void initState() {
@@ -54,7 +60,7 @@ class PlannerPageState extends State<PlannerPage>
   void _onAnalyzeSkip(AttendanceProvider provider, String subjectName) {
     if (!provider.result.subjectStats.containsKey(subjectName)) {
       showErrorToast(
-        "Subject '$subjectName' not found in your attendance data. Please ensure names match exactly.",
+        "Subject '$subjectName' not found in your attendance data.",
       );
       return;
     }
@@ -106,18 +112,15 @@ class PlannerPageState extends State<PlannerPage>
     SystemChannels.textInput.invokeMethod('TextInput.hide');
   }
 
-  // --- Build Method ---
   @override
   Widget build(BuildContext context) {
     return Consumer2<AttendanceProvider, PremiumProvider>(
-      // ✨ Watch BOTH providers
       builder: (context, provider, premium, child) {
         final theme = Theme.of(context);
         final bool hasBaseData = provider.result.dataParsedSuccessfully;
-        final bool isPremium = premium.isPremium; // ✨ Grab Premium status
+        final bool isPremium = premium.isPremium;
 
         return Scaffold(
-          // ✨ PREMIUM TOUCH: Glassmorphic AppBar with VIP Badge
           appBar: AppBar(
             title: Row(
               mainAxisSize: MainAxisSize.min,
@@ -129,7 +132,6 @@ class PlannerPageState extends State<PlannerPage>
                     letterSpacing: -0.5,
                   ),
                 ),
-                // ✨ PREMIUM TOUCH: The "PRO" Badge
                 if (isPremium) ...[
                   const SizedBox(width: 8),
                   Container(
@@ -139,7 +141,6 @@ class PlannerPageState extends State<PlannerPage>
                     ),
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
-                        // ✨ NEON PURPLE GRADIENT
                         colors: [Colors.deepPurpleAccent, Colors.purpleAccent],
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
@@ -156,8 +157,7 @@ class PlannerPageState extends State<PlannerPage>
                     child: const Text(
                       'PRO',
                       style: TextStyle(
-                        color: Colors
-                            .white, // ✨ White text looks way better on purple
+                        color: Colors.white,
                         fontSize: 10,
                         fontWeight: FontWeight.w900,
                         letterSpacing: 0.5,
@@ -190,18 +190,15 @@ class PlannerPageState extends State<PlannerPage>
                           provider,
                           theme,
                           isPremium,
-                        ), // Pass isPremium down
+                        ),
                 ),
               ),
-              // ✨ STRICT AD CHECK: Only show if NOT premium!
               if (!isPremium)
                 SafeArea(
                   top: false,
-                  child: isPremium
-                      ? const SizedBox.shrink()
-                      : BannerAdWidget(
-                          adUnitId: AdService.instance.plannerBannerAdUnitId,
-                        ),
+                  child: BannerAdWidget(
+                    adUnitId: AdService.instance.plannerBannerAdUnitId,
+                  ),
                 ),
             ],
           ),
@@ -224,7 +221,6 @@ class PlannerPageState extends State<PlannerPage>
     });
   }
 
-  // --- ✨ PREMIUM TOUCH: Vibrant Placeholder Widget ---
   Widget _buildPlaceholder(BuildContext context, ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
     final color = isDark ? Colors.purpleAccent : Colors.deepPurple;
@@ -274,13 +270,11 @@ class PlannerPageState extends State<PlannerPage>
     );
   }
 
-  // --- Main Planner Content ---
-  // --- Main Planner Content ---
   Widget _buildPlannerContent(
     BuildContext context,
     AttendanceProvider provider,
     ThemeData theme,
-    bool isPremium, // ✨ Accept isPremium parameter
+    bool isPremium,
   ) {
     final projectionSignature = [
       provider.projectionRemainingTime,
@@ -309,9 +303,8 @@ class PlannerPageState extends State<PlannerPage>
       ),
       child: Column(
         children: [
+          // ✨ THE NEW INTERACTIVE TIMELINE
           _buildTodaysClassesSection(context, provider, theme),
-
-          // ✨ PREMIUM TOUCH: Removed grey lines, using spatial hierarchy
           const SizedBox(height: 24),
 
           // 🔮 PROJECTION
@@ -327,10 +320,8 @@ class PlannerPageState extends State<PlannerPage>
               segmentedButtonStyle: _segmentedButtonStyle,
             ),
           ),
-
           const SizedBox(height: 24),
 
-          // ✨ STRICT NATIVE AD CHECK: Only show if NOT premium!
           if (!isPremium) ...[const NativeAdCard(), const SizedBox(height: 24)],
 
           // ✨ CUSTOM SCENARIO
@@ -345,11 +336,11 @@ class PlannerPageState extends State<PlannerPage>
               resultPlaceholder: _buildResultPlaceholder,
             ),
           ),
-
           const SizedBox(height: 24),
 
           // 🧪 ADVANCED WHAT-IF
           CustomCard(
+            key: _whatIfKey,
             child: PlannerSections.advancedWhatIf(
               context: context,
               provider: provider,
@@ -359,7 +350,6 @@ class PlannerPageState extends State<PlannerPage>
               elevatedButtonStyle: _elevatedButtonStyle,
             ),
           ),
-
           const SizedBox(height: 24),
 
           // 🏖️ HOLIDAY PLANNER
@@ -378,28 +368,22 @@ class PlannerPageState extends State<PlannerPage>
     );
   }
 
-  // --- ✨ PREMIUM TOUCH: Glowing Interactive Tickets ---
+  // =====================================================================
+  // ✨ THE SMART INTERACTIVE TIMELINE
+  // =====================================================================
   Widget _buildTodaysClassesSection(
     BuildContext context,
     AttendanceProvider provider,
     ThemeData theme,
   ) {
     final schedule = HiveService.getSchedule();
-    final today = DateTime.now().weekday;
+    final now = DateTime.now();
+    final today = now.weekday;
+    final todayDate = DateTime(now.year, now.month, now.day);
+
     final todaysClasses = schedule.where((e) => e.dayOfWeek == today).toList();
+    todaysClasses.sort((a, b) => a.startTime.compareTo(b.startTime));
 
-    final now = TimeOfDay.now();
-    final upcomingClasses = todaysClasses.where((e) {
-      final timeParts = e.startTime.split(':');
-      final classTime = TimeOfDay(
-        hour: int.parse(timeParts[0]),
-        minute: int.parse(timeParts[1]),
-      );
-      return (classTime.hour > now.hour) ||
-          (classTime.hour == now.hour && classTime.minute >= now.minute);
-    }).toList();
-
-    upcomingClasses.sort((a, b) => a.startTime.compareTo(b.startTime));
     final isDark = theme.brightness == Brightness.dark;
 
     return CustomCard(
@@ -426,14 +410,14 @@ class PlannerPageState extends State<PlannerPage>
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
-                  Icons.bolt_rounded,
+                  Icons.view_timeline_rounded,
                   color: theme.colorScheme.primary,
                   size: 20,
                 ),
               ),
               const SizedBox(width: 12),
               Text(
-                'Today\'s Classes',
+                'Today\'s Timeline',
                 style: theme.textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.w900,
                   letterSpacing: -0.5,
@@ -443,16 +427,19 @@ class PlannerPageState extends State<PlannerPage>
           ),
           const SizedBox(height: 6),
           Text(
-            'Tap any upcoming class to simulate skipping it.',
+            todaysClasses.isEmpty
+                ? 'No classes scheduled for today.'
+                : 'Tap past classes to log them. Tap future classes to simulate.',
             style: theme.textTheme.bodySmall?.copyWith(color: theme.hintColor),
           ),
           const SizedBox(height: 20),
-          if (upcomingClasses.isEmpty)
+
+          if (todaysClasses.isEmpty)
             Center(
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 24.0),
                 child: Text(
-                  'No upcoming classes right now. You\'re free! 🎉',
+                  'Enjoy your free day! 🎉',
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: theme.hintColor,
                     fontStyle: FontStyle.italic,
@@ -460,16 +447,85 @@ class PlannerPageState extends State<PlannerPage>
                 ),
               ),
             ),
-          if (upcomingClasses.isNotEmpty)
+
+          if (todaysClasses.isNotEmpty)
             SizedBox(
-              height: 120, // Taller to fit new design
+              height: 130,
               child: ListView.builder(
                 scrollDirection: Axis.horizontal,
                 physics: const BouncingScrollPhysics(),
-                clipBehavior: Clip.none, // Allows shadows to glow
-                itemCount: upcomingClasses.length,
+                clipBehavior: Clip.none,
+                itemCount: todaysClasses.length,
                 itemBuilder: (context, index) {
-                  final entry = upcomingClasses[index];
+                  final entry = todaysClasses[index];
+
+                  // Calculate DateTimes
+                  final timeParts = entry.startTime.split(':');
+                  final classTime = TimeOfDay(
+                    hour: int.parse(timeParts[0]),
+                    minute: int.parse(timeParts[1]),
+                  );
+
+                  // 1. Get the exact start time
+                  final classStartDateTime = DateTime(
+                    now.year,
+                    now.month,
+                    now.day,
+                    classTime.hour,
+                    classTime.minute,
+                  );
+
+                  // 2. ✨ ADD THE DURATION TO FIND THE END TIME
+                  final classEndDateTime = classStartDateTime.add(
+                    Duration(hours: entry.durationHours),
+                  );
+
+                  // 3. ✨ It's only "past" if the current time is AFTER the class ends
+                  final isPast = classEndDateTime.isBefore(now);
+
+                  // 4. ✨ SMART AWARENESS: It's only safely in the ERP if you pasted data AFTER it ended
+                  final pasteTime = provider.lastDataPasteTime;
+                  final isAlreadyInERP =
+                      pasteTime != null && classEndDateTime.isBefore(pasteTime);
+
+                  final existingLog = provider.quickLogs.firstWhereOrNull(
+                    (l) =>
+                        l.subject == entry.subjectName &&
+                        DateUtils.isSameDay(l.date, todayDate),
+                  );
+
+                  Color cardColor = theme.colorScheme.primary;
+                  IconData statusIcon = Icons.access_time_rounded;
+                  String statusText = entry.startTime;
+                  bool requiresPulse = false;
+
+                  // Apply UI logic based on new smart checks
+                  if (isAlreadyInERP) {
+                    cardColor = theme.colorScheme.primary;
+                    statusIcon = Icons.cloud_done_rounded;
+                    statusText = 'Class is over👀';
+                  } else if (isPast) {
+                    if (existingLog != null) {
+                      if (existingLog.status == 'attended') {
+                        cardColor = Colors.green;
+                        statusIcon = Icons.check_circle_rounded;
+                        statusText = 'Attended';
+                      } else if (existingLog.status == 'missed') {
+                        cardColor = Colors.red;
+                        statusIcon = Icons.cancel_rounded;
+                        statusText = 'Missed';
+                      } else {
+                        cardColor = Colors.grey;
+                        statusIcon = Icons.block_rounded;
+                        statusText = 'Canceled';
+                      }
+                    } else {
+                      cardColor = Colors.orangeAccent;
+                      statusIcon = Icons.notification_important_rounded;
+                      statusText = 'Action Required';
+                      requiresPulse = true;
+                    }
+                  }
 
                   return Container(
                     width: 170,
@@ -477,29 +533,58 @@ class PlannerPageState extends State<PlannerPage>
                     child: InkWell(
                       onTap: () {
                         HapticFeedback.selectionClick();
-                        _onAnalyzeSkip(provider, entry.subjectName);
-                        final adProvider = context.read<AdProvider>();
-                        final premium = context.read<PremiumProvider>();
 
-                        if (!premium.isPremium &&
-                            adProvider.shouldShowInterstitial) {
-                          Future.delayed(const Duration(milliseconds: 500), () {
-                            AdService.instance.showInterstitialAd();
+                        if (isAlreadyInERP) {
+                          showTopToast(
+                            '☁️ Synced: This class is already counted in your pasted data!',
+                            backgroundColor: theme.colorScheme.primary,
+                          );
+                        } else if (isPast) {
+                          _showQuickLogSheet(
+                            context,
+                            provider,
+                            entry,
+                            todayDate,
+                            existingLog,
+                          );
+                        } else {
+                          // Standard Future Simulation
+                          _onAnalyzeSkip(provider, entry.subjectName);
+                          Future.delayed(const Duration(milliseconds: 150), () {
+                            if (_whatIfKey.currentContext != null && mounted) {
+                              Scrollable.ensureVisible(
+                                _whatIfKey.currentContext!,
+                                duration: const Duration(milliseconds: 600),
+                                curve: Curves.easeInOutQuint,
+                                alignment: 0.1,
+                              );
+                            }
                           });
+                          _triggerAdSafety();
                         }
                       },
                       borderRadius: BorderRadius.circular(20),
-                      child: Container(
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(20),
-                          color: theme.colorScheme.primary.withOpacity(
-                            isDark ? 0.1 : 0.05,
-                          ),
+                          color: cardColor.withOpacity(isDark ? 0.15 : 0.1),
                           border: Border.all(
-                            color: theme.colorScheme.primary.withOpacity(0.2),
-                            width: 1.5,
+                            color: cardColor.withOpacity(
+                              requiresPulse ? 0.8 : 0.3,
+                            ),
+                            width: requiresPulse ? 2.0 : 1.5,
                           ),
+                          boxShadow: requiresPulse
+                              ? [
+                                  BoxShadow(
+                                    color: cardColor.withOpacity(0.2),
+                                    blurRadius: 12,
+                                    spreadRadius: 2,
+                                  ),
+                                ]
+                              : [],
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -511,19 +596,29 @@ class PlannerPageState extends State<PlannerPage>
                                 vertical: 4,
                               ),
                               decoration: BoxDecoration(
-                                color: isDark
-                                    ? theme.colorScheme.primaryContainer
-                                          .lighten()
-                                    : theme.colorScheme.primary,
+                                color: cardColor.withOpacity(
+                                  isDark ? 0.8 : 1.0,
+                                ),
                                 borderRadius: BorderRadius.circular(8),
                               ),
-                              child: Text(
-                                entry.startTime,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                  fontSize: 11,
-                                ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    statusIcon,
+                                    color: Colors.white,
+                                    size: 12,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    statusText,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                             const SizedBox(height: 10),
@@ -535,6 +630,15 @@ class PlannerPageState extends State<PlannerPage>
                               ),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
+                            ),
+                            const Spacer(),
+                            Text(
+                              '${entry.startTime} • ${entry.durationHours}h',
+                              style: TextStyle(
+                                color: theme.hintColor,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ],
                         ),
@@ -549,7 +653,216 @@ class PlannerPageState extends State<PlannerPage>
     );
   }
 
-  // Helper for placeholder text in result areas
+  // ✨ THE QUICK LOG BOTTOM SHEET
+  void _showQuickLogSheet(
+    BuildContext context,
+    AttendanceProvider provider,
+    ScheduleEntry entry,
+    DateTime date,
+    QuickLog? existingLog,
+  ) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return Container(
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+          decoration: BoxDecoration(
+            color: theme.scaffoldBackgroundColor,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: theme.hintColor.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 24),
+              Icon(
+                Icons.fact_check_rounded,
+                size: 42,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Log Class',
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Did you attend ${entry.subjectName} today?',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.hintColor,
+                ),
+              ),
+              const SizedBox(height: 32),
+
+              // ACTION BUTTONS
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildLogButton(
+                      context: ctx,
+                      icon: Icons.check_circle_rounded,
+                      label: 'Attended',
+                      color: Colors.green,
+                      isDark: isDark,
+                      onTap: () {
+                        provider.logQuickAction(
+                          entry.subjectName,
+                          date,
+                          'attended',
+                          entry.durationHours,
+                        );
+                        Navigator.pop(ctx);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildLogButton(
+                      context: ctx,
+                      icon: Icons.cancel_rounded,
+                      label: 'Missed',
+                      color: Colors.red,
+                      isDark: isDark,
+                      onTap: () {
+                        provider.logQuickAction(
+                          entry.subjectName,
+                          date,
+                          'missed',
+                          entry.durationHours,
+                        );
+                        Navigator.pop(ctx);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildLogButton(
+                      context: ctx,
+                      icon: Icons.block_rounded,
+                      label: 'Canceled',
+                      color: Colors.grey,
+                      isDark: isDark,
+                      onTap: () {
+                        provider.logQuickAction(
+                          entry.subjectName,
+                          date,
+                          'canceled',
+                          entry.durationHours,
+                        );
+                        Navigator.pop(ctx);
+                      },
+                    ),
+                  ),
+                  if (existingLog != null) ...[
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildLogButton(
+                        context: ctx,
+                        icon: Icons.undo_rounded,
+                        label: 'Undo Log',
+                        color: theme.colorScheme.primary,
+                        isDark: isDark,
+                        isOutlined: true,
+                        onTap: () {
+                          provider.undoQuickLog(entry.subjectName, date);
+                          Navigator.pop(ctx);
+                        },
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildLogButton({
+    required BuildContext context,
+    required IconData icon,
+    required String label,
+    required Color color,
+    required bool isDark,
+    required VoidCallback onTap,
+    bool isOutlined = false,
+  }) {
+    return isOutlined
+        ? OutlinedButton.icon(
+            icon: Icon(icon, size: 18),
+            label: Text(
+              label,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              foregroundColor: color,
+              side: BorderSide(color: color.withOpacity(0.5)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            onPressed: () {
+              HapticFeedback.lightImpact();
+              onTap();
+            },
+          )
+        : ElevatedButton.icon(
+            icon: Icon(icon, size: 18),
+            label: Text(
+              label,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              backgroundColor: isDark
+                  ? color.withOpacity(0.2)
+                  : color.withOpacity(0.1),
+              foregroundColor: color,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            onPressed: () {
+              HapticFeedback.heavyImpact();
+              onTap();
+            },
+          );
+  }
+
+  void _triggerAdSafety() {
+    final adProvider = context.read<AdProvider>();
+    final premium = context.read<PremiumProvider>();
+
+    if (!premium.isPremium && adProvider.shouldShowInterstitial) {
+      Future.delayed(const Duration(milliseconds: 500), () {
+        AdService.instance.showInterstitialAd();
+      });
+    }
+  }
+
+  // --- STYLING HELPERS ---
   Widget _buildResultPlaceholder(ThemeData theme, String text) {
     return Center(
       child: Padding(
@@ -563,7 +876,6 @@ class PlannerPageState extends State<PlannerPage>
     );
   }
 
-  // --- STYLING HELPERS ---
   InputDecoration _inputDecoration(
     ThemeData theme, {
     String? label,

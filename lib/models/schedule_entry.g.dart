@@ -19,19 +19,22 @@ class ScheduleEntryAdapter extends TypeAdapter<ScheduleEntry> {
     return ScheduleEntry()
       ..subjectName = fields[0] as String
       ..dayOfWeek = fields[1] as int
-      ..startTime = fields[2] as String;
+      ..startTime = fields[2] as String
+      ..durationHours = fields[3] == null ? 1 : fields[3] as int;
   }
 
   @override
   void write(BinaryWriter writer, ScheduleEntry obj) {
     writer
-      ..writeByte(3)
+      ..writeByte(4)
       ..writeByte(0)
       ..write(obj.subjectName)
       ..writeByte(1)
       ..write(obj.dayOfWeek)
       ..writeByte(2)
-      ..write(obj.startTime);
+      ..write(obj.startTime)
+      ..writeByte(3)
+      ..write(obj.durationHours);
   }
 
   @override

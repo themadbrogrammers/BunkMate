@@ -12,4 +12,7 @@ class ScheduleEntry extends HiveObject {
 
   @HiveField(2)
   late String startTime; // Stored as "HH:mm" (24-hour)
+
+  @HiveField(3, defaultValue: 1)
+  int durationHours = 1;
 }

@@ -813,7 +813,7 @@ class HomeVisuals {
       } else if (skips >= untouchableSkips) {
         HapticFeedback.heavyImpact();
         // 🗿 UNTOUCHABLE
-        statusText = "Untouchable 🗿";
+        statusText = "Invincible 🗿";
         statusColor = isDarkMode
             ? Colors.tealAccent.shade400
             : Colors.teal.shade700;

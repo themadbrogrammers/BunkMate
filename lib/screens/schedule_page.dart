@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:intl/intl.dart'; // ✨ NEW: For parsing dates into days of the week
+import 'package:intl/intl.dart';
 
 import 'package:bunkmate/models/schedule_entry.dart';
 import 'package:bunkmate/services/hive_service.dart';
@@ -26,6 +26,7 @@ class SchedulePage extends StatefulWidget {
 class _SchedulePageState extends State<SchedulePage> {
   bool _isDeleting = false;
   bool _showGestureHint = false;
+  bool _showSyncHint = false;
 
   List<ScheduleEntry> _schedule = [];
   final Map<int, String> _dayMap = {
@@ -57,21 +58,25 @@ class _SchedulePageState extends State<SchedulePage> {
     _loadSchedule();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final prefs = await SharedPreferences.getInstance();
-      final seen = prefs.getBool('seen_schedule_gesture_hint') ?? false;
-      if (!seen && _schedule.length <= 2) {
-        setState(() => _showGestureHint = true);
-      }
+
+      final hasDeletedOnce =
+          prefs.getBool('has_deleted_schedule_item') ?? false;
+      final seenSync = prefs.getBool('seen_auto_sync_hint') ?? false;
+
+      setState(() {
+        if (!hasDeletedOnce) _showGestureHint = true;
+        if (!seenSync) _showSyncHint = true;
+      });
     });
   }
 
   void _loadSchedule() {
     setState(() {
       _schedule = HiveService.getSchedule();
-      if (_schedule.length > 2) _showGestureHint = false;
     });
   }
 
-  // ✨ THE MAGIC AUTO-SYNC ENGINE ✨
+  // ✨ THE MAGIC AUTO-SYNC ENGINE (Now with Duration) ✨
   Future<void> _autoSyncSchedule(BuildContext context) async {
     final theme = Theme.of(context);
     final provider = Provider.of<AttendanceProvider>(context, listen: false);
@@ -112,6 +117,10 @@ class _SchedulePageState extends State<SchedulePage> {
     int timeIdx = headers.indexWhere(
       (h) => h == 'starting time' || h == 'time',
     );
+    // ✨ NEW: Find the duration column!
+    int durationIdx = headers.indexWhere(
+      (h) => h == 'number of hours' || h == 'hours' || h == 'duration',
+    );
 
     if (subIdx == -1 || dateIdx == -1 || timeIdx == -1) {
       showErrorToast('Requires Subject, Date, and Time columns to auto-sync.');
@@ -126,7 +135,6 @@ class _SchedulePageState extends State<SchedulePage> {
       DateFormat("M/d/yyyy"),
     ];
 
-    // 1. Extract all valid classes with their specific Dates
     List<Map<String, dynamic>> allParsedClasses = [];
 
     for (int i = headerIdx + 1; i < lines.length; i++) {
@@ -138,11 +146,9 @@ class _SchedulePageState extends State<SchedulePage> {
         continue;
       }
 
-      // ✨ SMART FILTER: Ignore makeup classes so they don't pollute the weekly schedule
       if (subject.toUpperCase().contains('MAKEUP')) continue;
       if (values.any((v) => v.toUpperCase() == 'MAKEUP')) continue;
 
-      // EXTRACT DATE & DAY OF WEEK
       final dateStr = values[dateIdx].toLowerCase();
       DateTime? rowDate;
       int dayOfWeek = -1;
@@ -162,7 +168,6 @@ class _SchedulePageState extends State<SchedulePage> {
 
       if (rowDate == null || dayOfWeek == -1) continue;
 
-      // EXTRACT & FORMAT TIME
       String timeStr = values[timeIdx];
       String formattedTime = timeStr;
       try {
@@ -181,11 +186,19 @@ class _SchedulePageState extends State<SchedulePage> {
         }
       } catch (_) {}
 
+      // ✨ NEW: Extract Duration
+      int parsedDuration = 1;
+      if (durationIdx != -1 && values.length > durationIdx) {
+        parsedDuration = int.tryParse(values[durationIdx]) ?? 1;
+        if (parsedDuration < 1) parsedDuration = 1;
+      }
+
       allParsedClasses.add({
         'subject': subject,
         'dayOfWeek': dayOfWeek,
         'time': formattedTime,
         'date': rowDate,
+        'duration': parsedDuration, // Pass it down
       });
     }
 
@@ -194,24 +207,34 @@ class _SchedulePageState extends State<SchedulePage> {
       return;
     }
 
-    // 2. ✨ THE "LAST WEEK" ALGORITHM ✨
-    // Find the MOST RECENT date that each Day of the Week occurred
-    final Map<int, DateTime> mostRecentDates = {};
-    for (var c in allParsedClasses) {
-      int day = c['dayOfWeek'];
-      DateTime date = c['date'];
-      if (!mostRecentDates.containsKey(day) ||
-          date.isAfter(mostRecentDates[day]!)) {
-        mostRecentDates[day] = date;
+    // ✅ STEP A: Find latest date in dataset
+    final latestDate = allParsedClasses
+        .map((c) => c['date'] as DateTime)
+        .reduce((a, b) => a.isAfter(b) ? a : b);
+
+    // ✅ STEP B: Take last 14 days
+    final cutoffDate = latestDate.subtract(const Duration(days: 11));
+
+    final recentClasses = allParsedClasses.where((c) {
+      final date = c['date'] as DateTime;
+      return date.isAfter(cutoffDate) || date.isAtSameMomentAs(cutoffDate);
+    }).toList();
+
+    // ✅ STEP C: Deduplicate using signature
+    final Map<String, Map<String, dynamic>> uniqueClasses = {};
+
+    for (var c in recentClasses) {
+      final key = '${c['dayOfWeek']}-${c['time']}-${c['subject']}';
+
+      if (!uniqueClasses.containsKey(key) ||
+          (c['date'] as DateTime).isAfter(uniqueClasses[key]!['date'])) {
+        uniqueClasses[key] = c;
       }
     }
 
-    // 3. Filter to ONLY include classes from those specific most recent dates
-    final finalClassesToSync = allParsedClasses.where((c) {
-      return c['date'].isAtSameMomentAs(mostRecentDates[c['dayOfWeek']]!);
-    }).toList();
+    // ✅ FINAL LIST
+    final finalClassesToSync = uniqueClasses.values.toList();
 
-    // 4. Save to Hive, avoiding duplicates
     final Set<String> uniqueSignatures = {};
     for (var e in _schedule) {
       uniqueSignatures.add('${e.dayOfWeek}-${e.startTime}-${e.subjectName}');
@@ -224,6 +247,7 @@ class _SchedulePageState extends State<SchedulePage> {
       int day = c['dayOfWeek'];
       String time = c['time'];
       String subject = c['subject'];
+      int duration = c['duration'];
 
       final sig = '$day-$time-$subject';
       if (!uniqueSignatures.contains(sig)) {
@@ -233,12 +257,13 @@ class _SchedulePageState extends State<SchedulePage> {
         final entry = ScheduleEntry()
           ..subjectName = subject
           ..dayOfWeek = day
-          ..startTime = time;
+          ..startTime = time
+          ..durationHours = duration; // ✨ Save duration to DB
 
         await HiveService.addEntry(entry);
         addedCount++;
       } else {
-        foundDays.add(day); // Still register that we saw a class on this day
+        foundDays.add(day);
       }
     }
 
@@ -246,7 +271,6 @@ class _SchedulePageState extends State<SchedulePage> {
 
     if (addedCount > 0) {
       HapticFeedback.heavyImpact();
-      // Check for missing typical weekdays (Mon-Fri)
       final missingDays = [
         1,
         2,
@@ -271,6 +295,140 @@ class _SchedulePageState extends State<SchedulePage> {
       showTopToast(
         'Schedule is already up to date with your latest week!',
         backgroundColor: theme.colorScheme.primary,
+      );
+    }
+  }
+
+  Future<void> _clearAllClasses(BuildContext context) async {
+    if (_schedule.isEmpty) return;
+
+    HapticFeedback.mediumImpact();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        final dialogTheme = Theme.of(ctx);
+        final dialogIsDark = dialogTheme.brightness == Brightness.dark;
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: dialogIsDark
+                    ? [
+                        Colors.red.shade900.withOpacity(0.35),
+                        Colors.red.shade800.withOpacity(0.15),
+                      ]
+                    : [
+                        Colors.red.shade100.withOpacity(0.6),
+                        Colors.red.shade50.withOpacity(0.3),
+                      ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.red.withOpacity(0.15),
+                  ),
+                  child: const Icon(
+                    Icons.warning_rounded,
+                    size: 38,
+                    color: Colors.red,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Clear Schedule?',
+                  style: dialogTheme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Delete all ${_schedule.length} classes?',
+                  style: dialogTheme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: Colors.redAccent,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'This will empty your weekly rotation completely. This action cannot be undone.',
+                  textAlign: TextAlign.center,
+                  style: dialogTheme.textTheme.bodyMedium?.copyWith(
+                    color: dialogTheme.hintColor,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 28),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        onPressed: () => Navigator.of(ctx).pop(false),
+                        child: const Text(
+                          'Cancel',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red.shade600,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        onPressed: () => Navigator.of(ctx).pop(true),
+                        child: const Text(
+                          'Clear All',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (confirmed == true) {
+      for (var entry in _schedule.toList()) {
+        await HiveService.deleteEntry(entry.key);
+      }
+
+      setState(() {
+        _schedule.clear();
+      });
+
+      HapticFeedback.heavyImpact();
+      showTopToast(
+        '🧹 Schedule cleared completely.',
+        backgroundColor: Colors.red.shade600,
       );
     }
   }
@@ -343,18 +501,37 @@ class _SchedulePageState extends State<SchedulePage> {
               backgroundColor: theme.scaffoldBackgroundColor.withOpacity(0.85),
               flexibleSpace: ClipRect(
                 child: BackdropFilter(
-                  filter: dart_ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                  filter: dart_ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
                   child: Container(color: Colors.transparent),
                 ),
               ),
-              // ✨ AUTO SYNC BUTTON
               actions: [
-                IconButton(
-                  icon: const Icon(Icons.auto_awesome_rounded),
-                  color: isDark ? Colors.purpleAccent : Colors.deepPurpleAccent,
-                  tooltip: 'Auto Sync from Raw Data',
-                  onPressed: () => _autoSyncSchedule(context),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10.0),
+                  child: AnimatedScale(
+                    scale: _showSyncHint ? 1.1 : 1.0,
+                    duration: const Duration(milliseconds: 600),
+                    curve: Curves.easeInOut,
+                    child: IconButton(
+                      icon: const Icon(Icons.auto_awesome_rounded, size: 20),
+                      splashRadius: 22,
+                      splashColor: Colors.purpleAccent.withOpacity(0.2),
+                      highlightColor: Colors.transparent,
+                      tooltip: 'Auto Sync',
+                      color: isDark
+                          ? Colors.purpleAccent
+                          : Colors.deepPurpleAccent,
+                      onPressed: () => _autoSyncSchedule(context),
+                    ),
+                  ),
                 ),
+                if (_schedule.isNotEmpty)
+                  IconButton(
+                    icon: const Icon(Icons.delete_sweep_rounded),
+                    color: Colors.redAccent,
+                    tooltip: 'Clear Entire Schedule',
+                    onPressed: () => _clearAllClasses(context),
+                  ),
                 const SizedBox(width: 8),
               ],
             ),
@@ -481,6 +658,47 @@ class _SchedulePageState extends State<SchedulePage> {
             child: _buildScheduleSummary(theme),
           ),
         ),
+        if (_showSyncHint)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: CustomCard(
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.deepPurpleAccent.withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.auto_awesome_rounded,
+                      color: Colors.deepPurpleAccent,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Auto Sync your schedule instantly from attendance data.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 20),
+                    onPressed: () async {
+                      final prefs = await SharedPreferences.getInstance();
+                      await prefs.setBool('seen_auto_sync_hint', true);
+                      setState(() => _showSyncHint = false);
+                      HapticFeedback.selectionClick();
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
         if (_showGestureHint)
           Padding(
             padding: const EdgeInsets.only(bottom: 16),
@@ -504,7 +722,7 @@ class _SchedulePageState extends State<SchedulePage> {
                     icon: const Icon(Icons.close, size: 20),
                     onPressed: () async {
                       final prefs = await SharedPreferences.getInstance();
-                      await prefs.setBool('seen_schedule_gesture_hint', true);
+                      await prefs.setBool('has_deleted_schedule_item', true);
                       setState(() => _showGestureHint = false);
                       HapticFeedback.selectionClick();
                     },
@@ -654,8 +872,17 @@ class _SchedulePageState extends State<SchedulePage> {
 
         if (confirmed == true) {
           await HiveService.deleteEntry(entry.key);
-          setState(() => _schedule.remove(entry));
+
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setBool('has_deleted_schedule_item', true);
+
+          setState(() {
+            _schedule.remove(entry);
+            _showGestureHint = false;
+          });
+
           showTopToast('🧹 Class removed');
+
           _isDeleting = false;
           return true;
         }
@@ -753,8 +980,9 @@ class _SchedulePageState extends State<SchedulePage> {
                                             : Colors.black54,
                                       ),
                                       const SizedBox(width: 6),
+                                      // ✨ NEW: Time and Duration beautifully displayed
                                       Text(
-                                        entry.startTime,
+                                        '${entry.startTime} • ${entry.durationHours} hr${entry.durationHours > 1 ? 's' : ''}',
                                         style: TextStyle(
                                           fontWeight: FontWeight.w600,
                                           color: isDark
@@ -857,6 +1085,9 @@ class _SchedulePageState extends State<SchedulePage> {
     String currentSubjectText = entry?.subjectName ?? '';
 
     int selectedDay = entry?.dayOfWeek ?? 1;
+    // ✨ NEW: Store the selected duration (defaults to 1, or existing value)
+    int selectedDuration = entry?.durationHours ?? 1;
+
     TimeOfDay? selectedTime = entry != null
         ? TimeOfDay(
             hour: int.parse(entry.startTime.split(':')[0]),
@@ -1025,64 +1256,107 @@ class _SchedulePageState extends State<SchedulePage> {
                           ),
                           const SizedBox(height: 16),
 
-                          Container(
-                            decoration: BoxDecoration(
-                              color: theme.colorScheme.primary.withOpacity(
-                                0.05,
-                              ),
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: ListTile(
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 4,
-                              ),
-                              title: const Text(
-                                'Start Time',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 14,
-                                ),
-                              ),
-                              subtitle: Text(
-                                selectedTime == null
-                                    ? 'Tap to select time'
-                                    : selectedTime!.format(context),
-                                style: TextStyle(
-                                  color: selectedTime == null
-                                      ? theme.hintColor
-                                      : theme.colorScheme.primary,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              trailing: Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  shape: BoxShape.circle,
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.05),
-                                      blurRadius: 4,
+                          Row(
+                            children: [
+                              Expanded(
+                                flex: 3,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: theme.colorScheme.primary
+                                        .withOpacity(0.05),
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  child: ListTile(
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 4,
                                     ),
-                                  ],
-                                ),
-                                child: Icon(
-                                  Icons.access_time_filled_rounded,
-                                  color: theme.colorScheme.primary,
-                                  size: 20,
+                                    title: const Text(
+                                      'Start Time',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                    subtitle: Text(
+                                      selectedTime == null
+                                          ? 'Select time'
+                                          : selectedTime!.format(context),
+                                      style: TextStyle(
+                                        color: selectedTime == null
+                                            ? theme.hintColor
+                                            : theme.colorScheme.primary,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    trailing: Icon(
+                                      Icons.access_time_filled_rounded,
+                                      color: theme.colorScheme.primary,
+                                      size: 20,
+                                    ),
+                                    onTap: () async {
+                                      final time = await showTimePicker(
+                                        context: context,
+                                        initialTime:
+                                            selectedTime ?? TimeOfDay.now(),
+                                      );
+                                      if (time != null) {
+                                        setDialogState(
+                                          () => selectedTime = time,
+                                        );
+                                      }
+                                    },
+                                  ),
                                 ),
                               ),
-                              onTap: () async {
-                                final time = await showTimePicker(
-                                  context: context,
-                                  initialTime: selectedTime ?? TimeOfDay.now(),
-                                );
-                                if (time != null) {
-                                  setDialogState(() => selectedTime = time);
-                                }
-                              },
-                            ),
+                              const SizedBox(width: 12),
+
+                              // ✨ NEW: Duration Dropdown!
+                              Expanded(
+                                flex: 2,
+                                child: DropdownButtonFormField<int>(
+                                  value: selectedDuration,
+                                  decoration: InputDecoration(
+                                    labelText: 'Duration',
+                                    labelStyle: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14,
+                                    ),
+                                    filled: true,
+                                    fillColor: theme.colorScheme.primary
+                                        .withOpacity(0.05),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 15,
+                                    ),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                  ),
+                                  icon: const Icon(
+                                    Icons.expand_more_rounded,
+                                    size: 18,
+                                  ),
+                                  items: [1, 2, 3, 4, 5]
+                                      .map(
+                                        (e) => DropdownMenuItem(
+                                          value: e,
+                                          child: Text(
+                                            '$e hr${e > 1 ? 's' : ''}',
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                      )
+                                      .toList(),
+                                  onChanged: (v) => setDialogState(
+                                    () => selectedDuration = v!,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                           const SizedBox(height: 28),
 
@@ -1154,7 +1428,9 @@ class _SchedulePageState extends State<SchedulePage> {
                                         ..subjectName = finalSubject
                                         ..dayOfWeek = selectedDay
                                         ..startTime =
-                                            '${selectedTime!.hour.toString().padLeft(2, '0')}:${selectedTime!.minute.toString().padLeft(2, '0')}';
+                                            '${selectedTime!.hour.toString().padLeft(2, '0')}:${selectedTime!.minute.toString().padLeft(2, '0')}'
+                                        ..durationHours =
+                                            selectedDuration; // ✨ Save duration
 
                                       if (entry == null) {
                                         await HiveService.addEntry(newEntry);

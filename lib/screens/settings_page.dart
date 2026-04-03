@@ -712,7 +712,6 @@ class SettingsPageState extends State<SettingsPage> with ScrollToTopMixin {
                 ),
 
                 //thatsit
-
                 if (showProactiveAlertsFeature)
                   _buildSettingsTile(
                     context: context,
@@ -858,6 +857,16 @@ class SettingsPageState extends State<SettingsPage> with ScrollToTopMixin {
               children: [
                 _buildSettingsTile(
                   context: context,
+                  icon: Icons.public_rounded,
+                  color: Colors.blueAccent,
+                  title: 'Our Website',
+                  subtitle: 'Lowkey cool stuff here',
+                  onTap: () {
+                    _launchURL('https://themadbrogrammers.vercel.app');
+                  },
+                ),
+                _buildSettingsTile(
+                  context: context,
                   icon: Icons.email_rounded,
                   color: Colors.teal,
                   title: 'Email Us for Support',
@@ -877,7 +886,7 @@ class SettingsPageState extends State<SettingsPage> with ScrollToTopMixin {
                   subtitle: 'Ideas, feedback, and general questions',
                   onTap: () {
                     _launchURL(
-                      'https://github.com/themadbrogrammers/BunkER/discussions',
+                      'https://github.com/themadbrogrammers/BunkMate/discussions',
                     );
                   },
                 ),
@@ -889,7 +898,7 @@ class SettingsPageState extends State<SettingsPage> with ScrollToTopMixin {
                   subtitle: 'Find a bug? Let us know on GitHub',
                   onTap: () {
                     _launchURL(
-                      'https://github.com/themadbrogrammers-art/BunkER/issues',
+                      'https://github.com/themadbrogrammers/BunkMate/issues',
                     );
                   },
                 ),

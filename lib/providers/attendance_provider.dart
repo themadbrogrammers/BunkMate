@@ -8,46 +8,83 @@ import 'package:bunkmate/services/attendance_calculator.dart';
 import 'package:bunkmate/helpers/toast_helper.dart';
 import 'package:bunkmate/services/remote_config_service.dart';
 
+// ✨ NEW: Model to track daily interactive actions
+class QuickLog {
+  final String subject;
+  final DateTime date;
+  final String status; // 'attended', 'missed', 'canceled'
+  final int duration;
+
+  QuickLog({
+    required this.subject,
+    required this.date,
+    required this.status,
+    this.duration = 1,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'subject': subject,
+    'date': date.toIso8601String(),
+    'status': status,
+    'duration': duration,
+  };
+
+  factory QuickLog.fromJson(Map<String, dynamic> json) => QuickLog(
+    subject: json['subject'],
+    date: DateTime.parse(json['date']),
+    status: json['status'],
+    duration: json['duration'] ?? 1,
+  );
+}
+
 class SaveSlot {
   String name;
+  String type;
   String attendanceData;
   int targetPercent;
   String projectionMode;
   int projectionRemainingTime;
   int projectionClassesPerWeek;
   int projectionDaysPerWeek;
+  String gpaData;
   DateTime timestamp;
 
   SaveSlot({
     required this.name,
+    this.type = 'attendance',
     required this.attendanceData,
     required this.targetPercent,
     required this.projectionMode,
     required this.projectionRemainingTime,
     required this.projectionClassesPerWeek,
     required this.projectionDaysPerWeek,
+    this.gpaData = '',
     required this.timestamp,
   });
 
   Map<String, dynamic> toJson() => {
     'name': name,
+    'type': type,
     'attendanceData': attendanceData,
     'targetPercent': targetPercent,
     'projectionMode': projectionMode,
     'projectionRemainingTime': projectionRemainingTime,
     'projectionClassesPerWeek': projectionClassesPerWeek,
     'projectionDaysPerWeek': projectionDaysPerWeek,
+    'gpaData': gpaData,
     'timestamp': timestamp.toIso8601String(),
   };
 
   factory SaveSlot.fromJson(Map<String, dynamic> json) => SaveSlot(
     name: json['name'] as String? ?? 'Unnamed Slot',
+    type: json['type'] as String? ?? 'attendance',
     attendanceData: json['attendanceData'] as String? ?? '',
     targetPercent: json['targetPercent'] as int? ?? 65,
     projectionMode: json['projectionMode'] as String? ?? 'weeks',
     projectionRemainingTime: json['projectionRemainingTime'] as int? ?? 5,
     projectionClassesPerWeek: json['projectionClassesPerWeek'] as int? ?? 35,
     projectionDaysPerWeek: json['projectionDaysPerWeek'] as int? ?? 6,
+    gpaData: json['gpaData'] as String? ?? '',
     timestamp:
         DateTime.tryParse(json['timestamp'] as String? ?? '') ?? DateTime.now(),
   );
@@ -174,6 +211,8 @@ class AttendanceProvider extends ChangeNotifier {
   int _targetPercentage = 65;
   int get targetPercentage => _targetPercentage;
 
+  // ✨ NEW: Hold the base result separate from the layered result
+  CalculationResult _baseResult = CalculationResult.empty();
   CalculationResult _result = CalculationResult.empty();
   CalculationResult get result => _result;
 
@@ -191,6 +230,12 @@ class AttendanceProvider extends ChangeNotifier {
 
   String? _fileName;
   String? get fileName => _fileName;
+  DateTime? _lastDataPasteTime;
+  DateTime? get lastDataPasteTime => _lastDataPasteTime;
+
+  // ✨ NEW: Quick Logs State
+  List<QuickLog> _quickLogs = [];
+  List<QuickLog> get quickLogs => _quickLogs;
 
   // --- Planner State ---
   int _plannerFutureClassesToAttend = 0;
@@ -242,47 +287,170 @@ class AttendanceProvider extends ChangeNotifier {
   SharedPreferences? _prefs;
 
   AttendanceProvider() {
-    // _initAndLoad();
-    _ensurePrefs();
-    loadSavedTargetOnly();
+    _ensurePrefs().then((_) {
+      loadSavedTargetOnly();
+      _loadQuickLogs();
+    });
   }
 
   // --- Initialization & Persistence Helpers ---
-
-  // Future<void> _initAndLoad() async {
-  //   await _ensurePrefs();
-  //   await loadSavedData();
-  // }
 
   Future<void> _ensurePrefs() async {
     _prefs ??= await SharedPreferences.getInstance();
   }
 
-  // Future<void> loadSavedTargetOnly() async {
-  //   await _ensurePrefs();
-  //   final savedTarget = _prefs!.getInt('lastTargetPercentage');
-
-  //   if (savedTarget != null && savedTarget >= 0 && savedTarget <= 100) {
-  //     _targetPercentage = savedTarget;
-  //     notifyListeners(); // UI slider updates
-  //   }
-  // }
-
   Future<void> loadSavedTargetOnly() async {
     await _ensurePrefs();
-
-    // 1. Try to load the target they were specifically using last session
     final savedSessionTarget = _prefs!.getInt('lastTargetPercentage');
-    // 2. If it's a fresh start, grab their global default setting (fallback to 75)
     final globalDefaultTarget = _prefs!.getInt('defaultTarget') ?? 75;
-
-    // ✨ FIX: Use the session target if it exists, otherwise use their global default
     final finalTargetToUse = savedSessionTarget ?? globalDefaultTarget;
 
     if (finalTargetToUse >= 0 && finalTargetToUse <= 100) {
       _targetPercentage = finalTargetToUse;
       notifyListeners();
     }
+  }
+
+  // ✨ NEW: Quick Logs Load/Save Methods
+  Future<void> _loadQuickLogs() async {
+    await _ensurePrefs();
+    final logsJson = _prefs!.getString('quick_logs');
+    if (logsJson != null && logsJson.isNotEmpty) {
+      try {
+        final List decoded = jsonDecode(logsJson);
+        _quickLogs = decoded.map((e) => QuickLog.fromJson(e)).toList();
+      } catch (e) {
+        debugPrint("Error loading quick logs: $e");
+      }
+    }
+  }
+
+  Future<void> _saveQuickLogs() async {
+    await _ensurePrefs();
+    final logsJson = jsonEncode(_quickLogs.map((e) => e.toJson()).toList());
+    await _prefs!.setString('quick_logs', logsJson);
+  }
+
+  // ✨ NEW: The method called when user taps an action in the UI
+  Future<void> logQuickAction(
+    String subject,
+    DateTime date,
+    String status,
+    int duration,
+  ) async {
+    // Remove previous action for this exact slot if they change their mind
+    _quickLogs.removeWhere((log) => log.subject == subject && log.date == date);
+
+    _quickLogs.add(
+      QuickLog(
+        subject: subject,
+        date: date,
+        status: status,
+        duration: duration,
+      ),
+    );
+
+    await _saveQuickLogs();
+    _result = _applyQuickLogs(_baseResult);
+    notifyListeners();
+  }
+
+  // ✨ NEW: Let them undo it
+  Future<void> undoQuickLog(String subject, DateTime date) async {
+    _quickLogs.removeWhere((log) => log.subject == subject && log.date == date);
+    await _saveQuickLogs();
+    _result = _applyQuickLogs(_baseResult);
+    notifyListeners();
+  }
+
+  // ✨ NEW: The Magical Math Layering Engine
+  CalculationResult _applyQuickLogs(CalculationResult base) {
+    if (_quickLogs.isEmpty || !base.dataParsedSuccessfully) return base;
+
+    // 1. Deep clone the stats so we don't permanently corrupt the base data
+    Map<String, SubjectStatsDetailed> newStats = {};
+    base.subjectStats.forEach((key, value) {
+      newStats[key] = SubjectStatsDetailed(
+        name: value.name,
+        attended: value.attended,
+        conducted: value.conducted,
+        present: value.present,
+        od: value.od,
+        makeup: value.makeup,
+        absent: value.absent,
+        initialAbsences: List.from(value.absences),
+      );
+    });
+
+    // 2. Apply logs
+    for (final log in _quickLogs) {
+      if (log.status == 'canceled')
+        continue; // Canceled means it didn't happen!
+
+      final stats = newStats.putIfAbsent(
+        log.subject,
+        () => SubjectStatsDetailed(name: log.subject),
+      );
+
+      if (log.status == 'attended') {
+        stats.attended += log.duration;
+        stats.conducted += log.duration;
+        stats.present += log.duration;
+      } else if (log.status == 'missed') {
+        stats.conducted += log.duration;
+        stats.absent += log.duration;
+        stats.absences.add(
+          AbsenceRecord(date: log.date, hours: log.duration.toDouble()),
+        );
+      }
+    }
+
+    // 3. Recalculate Totals
+    double totalAttended = 0.0, totalConducted = 0.0, totalPresent = 0.0;
+    double totalOD = 0.0, totalMakeup = 0.0, totalAbsent = 0.0;
+
+    newStats.forEach((_, stats) {
+      totalAttended += stats.attended;
+      totalConducted += stats.conducted;
+      totalPresent += stats.present;
+      totalOD += stats.od;
+      totalMakeup += stats.makeup;
+      totalAbsent += stats.absent;
+    });
+
+    final double targetDecimal = _targetPercentage / 100.0;
+    final double currentPercentage = (totalConducted > 0)
+        ? (totalAttended / totalConducted) * 100
+        : 0.0;
+
+    int maxDrop = 0;
+    int requiredClasses = 0;
+
+    if (totalConducted > 0 && targetDecimal > 0 && targetDecimal < 1) {
+      final numerator = totalAttended - (targetDecimal * totalConducted);
+      maxDrop = (numerator / targetDecimal).floor();
+
+      if (maxDrop < 0) {
+        final deficit = (targetDecimal * totalConducted) - totalAttended;
+        requiredClasses = (deficit / (1 - targetDecimal)).ceil();
+        maxDrop = 0;
+      }
+    } else if (targetDecimal >= 1.0) {
+      requiredClasses = 99999;
+    }
+
+    return base.copyWith(
+      totalAttended: totalAttended,
+      totalConducted: totalConducted,
+      totalPresent: totalPresent,
+      totalOD: totalOD,
+      totalMakeup: totalMakeup,
+      totalAbsent: totalAbsent,
+      currentPercentage: currentPercentage,
+      maxDroppableHours: maxDrop,
+      requiredToAttend: requiredClasses,
+      subjectStats: newStats,
+    );
   }
 
   // --- Core Lifecycle Methods ---
@@ -350,12 +518,50 @@ class AttendanceProvider extends ChangeNotifier {
       name: slotName.trim().isNotEmpty
           ? slotName.trim()
           : slotId.replaceFirst('slot', 'Save Slot '),
+      type: 'attendance', // ✨ Explicitly mark as attendance
       attendanceData: _rawData,
       targetPercent: _targetPercentage,
       projectionMode: _projectionMode,
       projectionRemainingTime: _projectionRemainingTime,
       projectionClassesPerWeek: _projectionClassesPerWeek,
       projectionDaysPerWeek: _projectionDaysPerWeek,
+      gpaData: '',
+      timestamp: DateTime.now(),
+    );
+
+    try {
+      final String savesJson = jsonEncode(
+        currentSaves.map((k, v) => MapEntry(k, v.toJson())),
+      );
+      await _prefs!.setString(_savesKey, savesJson);
+      notifyListeners();
+    } catch (e) {
+      debugPrint("Error saving slot: $e");
+    }
+  }
+
+  // ✨ NEW: Specific save method for GPA data
+  Future<void> saveGpaToSlot(
+    String slotId,
+    String slotName,
+    String gpaJson,
+  ) async {
+    await _ensurePrefs();
+    if (gpaJson.isEmpty) return;
+
+    final currentSaves = await getAllSaves();
+    currentSaves[slotId] = SaveSlot(
+      name: slotName.trim().isNotEmpty
+          ? slotName.trim()
+          : slotId.replaceFirst('slot', 'Save Slot '),
+      type: 'gpa',
+      attendanceData: '', // Empty because this is a GPA save
+      targetPercent: 65,
+      projectionMode: 'weeks',
+      projectionRemainingTime: 5,
+      projectionClassesPerWeek: 35,
+      projectionDaysPerWeek: 6,
+      gpaData: gpaJson,
       timestamp: DateTime.now(),
     );
 
@@ -475,11 +681,23 @@ class AttendanceProvider extends ChangeNotifier {
         ? newFileName
         : null;
 
+    // ✨ SMART CHECK: Track exactly when the data was pasted
+    _lastDataPasteTime = DateTime.now();
+    _prefs?.setString(
+      'lastDataPasteTime',
+      _lastDataPasteTime!.toIso8601String(),
+    );
+
+    // AUTO-WIPE: When fresh data is pasted, wipe the temporary logs!
+    _quickLogs.clear();
+    _saveQuickLogs();
+
     _clearValidationState();
 
     if (_rawData.isNotEmpty) {
       calculateHours();
     } else {
+      _baseResult = CalculationResult.empty();
       _result = CalculationResult.empty();
       notifyListeners();
     }
@@ -507,7 +725,6 @@ class AttendanceProvider extends ChangeNotifier {
     }
   }
 
-  // Planner Setters with redundant notify avoidance
   void setPlannerFutureClasses(int value) {
     final val = value.clamp(0, 9999);
     if (_plannerFutureClassesToAttend != val) {
@@ -615,6 +832,7 @@ class AttendanceProvider extends ChangeNotifier {
   Future<void> calculateHours() async {
     if (_rawData.trim().isEmpty) {
       if (_result.dataParsedSuccessfully || _errorMessage != null) {
+        _baseResult = CalculationResult.empty();
         _result = CalculationResult.empty();
         _errorMessage = null;
         notifyListeners();
@@ -639,13 +857,10 @@ class AttendanceProvider extends ChangeNotifier {
     try {
       final calcOutput = await compute(performCalculation, input);
 
-      // Race condition protection: Check if inputs mutated during isolate execution
       if (_rawData != input.rawData ||
           _targetPercentage != input.targetPercentage) {
         debugPrint("Stale isolate result discarded.");
         _isLoading = false;
-        // Logic intentionally returns without notifying; if state changed,
-        // another calculateHours() call is already queued or active.
         return;
       }
 
@@ -653,18 +868,23 @@ class AttendanceProvider extends ChangeNotifier {
       _isUnrecognizedFormat = calcOutput.unrecognizedFormat;
 
       if (_isUnrecognizedFormat) {
+        _baseResult = CalculationResult.empty();
         _result = CalculationResult.empty();
         _errorMessage = null;
         _rawInputSnapshot = _rawData;
         _whatIfResult = null;
         _holidayImpactResult = null;
       } else {
-        _result = calcOutput.result.copyWith(
+        // ✨ SAVE AS BASE RESULT
+        _baseResult = calcOutput.result.copyWith(
           targetPercentage: _targetPercentage,
           projectionClassesPerWeek: _projectionClassesPerWeek,
           fileName: _fileName,
           timestamp: DateTime.now(),
         );
+        // ✨ LAYER QUICK LOGS ON TOP!
+        _result = _applyQuickLogs(_baseResult);
+
         _errorMessage = calcOutput.errorMessage;
       }
 
@@ -677,6 +897,7 @@ class AttendanceProvider extends ChangeNotifier {
       notifyListeners();
     } catch (error) {
       _isLoading = false;
+      _baseResult = CalculationResult.empty();
       _result = CalculationResult.empty();
       _errorMessage = "Unexpected isolate error: ${error.toString()}";
       _whatIfResult = null;
@@ -696,7 +917,7 @@ class AttendanceProvider extends ChangeNotifier {
     if (_result.dataParsedSuccessfully) {
       await _prefs!.setInt('cached_max_droppable', _result.maxDroppableHours);
       await _prefs!.setInt('cached_required_attend', _result.requiredToAttend);
-    } //notification
+    }
 
     debugPrint("Persistent Save: Data and Target Cached.");
   }
@@ -705,6 +926,12 @@ class AttendanceProvider extends ChangeNotifier {
     await _ensurePrefs();
     final savedData = _prefs!.getString('lastRawData');
     final savedTarget = _prefs!.getInt('lastTargetPercentage');
+
+    // ✨ SMART CHECK: Load the paste time
+    final pasteTimeStr = _prefs!.getString('lastDataPasteTime');
+    if (pasteTimeStr != null) {
+      _lastDataPasteTime = DateTime.tryParse(pasteTimeStr);
+    }
 
     if (savedData != null || savedTarget != null) {
       if (savedData != null) _rawData = savedData;
@@ -721,33 +948,14 @@ class AttendanceProvider extends ChangeNotifier {
     return false;
   }
 
-  // Future<void> clearData() async {
-  //   _rawData = "";
-  //   _fileName = null;
-  //   _errorMessage = null;
-  //   _result = CalculationResult.empty();
-  //   _whatIfResult = null;
-  //   _holidayImpactResult = null;
-  //   _plannerFutureClassesToAttend = 0;
-  //   _isUnrecognizedFormat = false;
-  //   _rawInputSnapshot = null;
-
-  //   await _ensurePrefs();
-  //   await _prefs?.remove('lastRawData');
-  //   await _prefs?.remove('lastTargetPercentage');
-
-  //   notifyListeners();
-  // }
-
   Future<void> clearData() async {
     await _ensurePrefs();
-
-    // ✨ FIX: When they clear data, reset the slider back to their global default setting!
     final globalDefaultTarget = _prefs!.getInt('defaultTarget') ?? 75;
 
     _rawData = "";
     _fileName = null;
     _errorMessage = null;
+    _baseResult = CalculationResult.empty();
     _result = CalculationResult.empty();
     _whatIfResult = null;
     _holidayImpactResult = null;
@@ -755,9 +963,14 @@ class AttendanceProvider extends ChangeNotifier {
     _isUnrecognizedFormat = false;
     _rawInputSnapshot = null;
 
-    // Set the target to their preferred default
-    _targetPercentage = globalDefaultTarget;
+    // ✨ SMART CHECK: Clear the paste time
+    _lastDataPasteTime = null;
+    await _prefs?.remove('lastDataPasteTime');
 
+    _quickLogs.clear();
+    await _saveQuickLogs();
+
+    _targetPercentage = globalDefaultTarget;
     await _prefs?.remove('lastRawData');
     await _prefs?.remove('lastTargetPercentage');
 

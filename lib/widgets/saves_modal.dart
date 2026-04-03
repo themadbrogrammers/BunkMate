@@ -4,13 +4,15 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:bunkmate/providers/attendance_provider.dart';
 import 'package:bunkmate/providers/premium_provider.dart';
+import 'package:bunkmate/providers/gpa_provider.dart';
 import 'package:bunkmate/helpers/toast_helper.dart';
 
-// Import your gorgeous new premium sheet!
 import 'package:bunkmate/widgets/premium_sheet.dart';
 
 class SavesModal extends StatefulWidget {
-  const SavesModal({super.key});
+  final bool isGpaMode;
+
+  const SavesModal({super.key, this.isGpaMode = false});
 
   @override
   State<SavesModal> createState() => _SavesModalState();
@@ -21,7 +23,6 @@ class _SavesModalState extends State<SavesModal> {
   Map<String, TextEditingController> _nameControllers = {};
   final Map<String, FocusNode> _focusNodes = {};
 
-  // Hardcode to 5 total slots (2 Free + 3 Pro)
   static const int totalSlots = 5;
 
   @override
@@ -38,14 +39,12 @@ class _SavesModalState extends State<SavesModal> {
       _nameControllers.clear();
       _focusNodes.clear();
 
-      // Create controllers for all 5 potential slots
       for (var i = 1; i <= totalSlots; i++) {
         final slotId = 'slot$i';
         final initialName = saves[slotId]?.name ?? 'Save Slot $i';
         _nameControllers[slotId] = TextEditingController(text: initialName);
         _focusNodes[slotId] = FocusNode();
 
-        // --- Add listener to save name on focus loss ---
         _focusNodes[slotId]?.addListener(() {
           final node = _focusNodes[slotId];
           final controller = _nameControllers[slotId];
@@ -74,28 +73,48 @@ class _SavesModalState extends State<SavesModal> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AttendanceProvider>();
-    final premium = context.watch<PremiumProvider>(); // Watch Premium Status!
+    final premium = context.watch<PremiumProvider>();
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    return Padding(
+    final bool canSaveCurrentState = widget.isGpaMode
+        ? context.watch<GpaProvider>().semesters.isNotEmpty
+        : provider.rawData.trim().isNotEmpty;
+
+    // ✨ Solid background with rounded corners
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.scaffoldBackgroundColor,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      ),
       padding: EdgeInsets.only(
-        top: 20,
-        left: 16,
-        right: 16,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+        top: 12,
+        left: 20,
+        right: 20,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
       ),
       child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header
+            // ✨ Slick drag handle
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(
+                  color: theme.hintColor.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  '🗂️ Manage Saves',
+                  widget.isGpaMode ? '🗂️ GPA Saves' : '🗂️ Attendance Saves',
                   style: theme.textTheme.headlineSmall?.copyWith(
                     fontWeight: FontWeight.w900,
                   ),
@@ -103,7 +122,6 @@ class _SavesModalState extends State<SavesModal> {
                 IconButton(
                   icon: const Icon(Icons.close),
                   onPressed: () => Navigator.pop(context),
-                  tooltip: 'Close',
                 ),
               ],
             ),
@@ -120,15 +138,8 @@ class _SavesModalState extends State<SavesModal> {
                     ),
                   );
                 }
-                if (snapshot.hasError) {
-                  return Center(
-                    child: Text('Error loading saves: ${snapshot.error}'),
-                  );
-                }
-
                 final saves = snapshot.data ?? {};
 
-                // Build list of all 5 save slots
                 return ListView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
@@ -140,15 +151,17 @@ class _SavesModalState extends State<SavesModal> {
                     final focusNode = _focusNodes[slotId];
                     final bool hasDataInSlot = savedSlot != null;
 
+                    final bool isGpaSlot = savedSlot?.type == 'gpa';
+                    final String typeLabel = isGpaSlot ? 'GPA' : 'Attendance';
+
+                    // ✨ Determine if the slot type matches the current app context
+                    final bool isMatchingMode = isGpaSlot == widget.isGpaMode;
+
                     final String lastSaved = hasDataInSlot
-                        ? DateFormat.yMd().add_jm().format(
-                            savedSlot.timestamp.toLocal(),
-                          )
-                        : 'Empty';
+                        ? '$typeLabel • ${DateFormat.yMd().add_jm().format(savedSlot.timestamp.toLocal())}'
+                        : 'Empty Slot';
 
-                    // ✨ The Upsell Logic: Lock slots 3, 4, and 5 if not premium!
                     final bool isLocked = !premium.isPremium && index >= 2;
-
                     if (isLocked) {
                       return _buildLockedSlot(
                         context,
@@ -157,12 +170,10 @@ class _SavesModalState extends State<SavesModal> {
                         index + 1,
                       );
                     }
-
                     if (nameController == null || focusNode == null) {
                       return const SizedBox.shrink();
                     }
 
-                    // Standard Unlocked Slot UI
                     return Card(
                       margin: const EdgeInsets.symmetric(vertical: 6.0),
                       elevation: hasDataInSlot ? 2 : 0.5,
@@ -179,7 +190,20 @@ class _SavesModalState extends State<SavesModal> {
                         padding: const EdgeInsets.all(12.0),
                         child: Row(
                           children: [
-                            // Name and Timestamp
+                            if (hasDataInSlot) ...[
+                              Icon(
+                                // ✨ Backpack icon for attendance!
+                                isGpaSlot
+                                    ? Icons.science_rounded
+                                    : Icons.backpack_rounded,
+                                color: isGpaSlot
+                                    ? Colors.purpleAccent
+                                    : theme.colorScheme.primary,
+                                size: 28,
+                              ),
+                              const SizedBox(width: 12),
+                            ],
+
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -189,6 +213,12 @@ class _SavesModalState extends State<SavesModal> {
                                     focusNode: focusNode,
                                     style: theme.textTheme.titleSmall?.copyWith(
                                       fontWeight: FontWeight.bold,
+                                      color: (!hasDataInSlot || isMatchingMode)
+                                          ? (isDark
+                                                ? Colors.white
+                                                : Colors.black87)
+                                          : theme
+                                                .hintColor, // Dim text if wrong mode
                                     ),
                                     decoration: const InputDecoration(
                                       isDense: true,
@@ -198,7 +228,7 @@ class _SavesModalState extends State<SavesModal> {
                                     ),
                                   ),
                                   Text(
-                                    'Last Saved: $lastSaved',
+                                    lastSaved,
                                     style: theme.textTheme.bodySmall?.copyWith(
                                       color: theme.hintColor,
                                     ),
@@ -208,71 +238,113 @@ class _SavesModalState extends State<SavesModal> {
                             ),
                             const SizedBox(width: 8),
 
-                            // Action Buttons
                             Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                // Save Button
+                                // ✨ DYNAMIC SAVE BUTTON
                                 IconButton(
                                   icon: const Icon(Icons.save_alt_rounded),
                                   tooltip: 'Save Current Data Here',
                                   color: theme.colorScheme.primary,
                                   iconSize: 20,
                                   visualDensity: VisualDensity.compact,
-                                  onPressed: provider.rawData.trim().isEmpty
+                                  onPressed: !canSaveCurrentState
                                       ? null
                                       : () async {
                                           HapticFeedback.lightImpact();
                                           final currentName =
                                               nameController.text;
-                                          await provider.saveToSlot(
-                                            slotId,
-                                            currentName,
-                                          );
+
+                                          // ✨ CHECK FOR MISMATCHED OVERWRITE
+                                          if (hasDataInSlot &&
+                                              !isMatchingMode) {
+                                            bool? confirm =
+                                                await _showOverwriteWarning(
+                                                  context,
+                                                  isGpaSlot,
+                                                  premium.isPremium,
+                                                );
+                                            if (confirm != true)
+                                              return; // User canceled
+                                          }
+
+                                          if (widget.isGpaMode) {
+                                            final gpaProvider = context
+                                                .read<GpaProvider>();
+                                            await provider.saveGpaToSlot(
+                                              slotId,
+                                              currentName,
+                                              gpaProvider.exportToJson(),
+                                            );
+                                          } else {
+                                            await provider.saveToSlot(
+                                              slotId,
+                                              currentName,
+                                            );
+                                          }
+
                                           showTopToast(
                                             '💾 Saved to "$currentName"',
-                                            backgroundColor: Colors
-                                                .green
-                                                .shade600
-                                                .withOpacity(0.9),
+                                            backgroundColor:
+                                                Colors.green.shade600,
                                           );
                                           _refreshSavesList();
                                         },
                                 ),
-                                // Load Button
+                                // ✨ DYNAMIC LOAD BUTTON
                                 IconButton(
                                   icon: const Icon(Icons.download_rounded),
-                                  tooltip: 'Load Data From Here',
-                                  color: hasDataInSlot
+                                  tooltip: (!hasDataInSlot || isMatchingMode)
+                                      ? 'Load Data From Here'
+                                      : 'Cannot load $typeLabel data here',
+                                  // Grey out if empty OR if it's the wrong mode
+                                  color: (hasDataInSlot && isMatchingMode)
                                       ? Colors.green.shade600
-                                      : theme.disabledColor,
+                                      : theme.disabledColor.withOpacity(0.3),
                                   iconSize: 20,
                                   visualDensity: VisualDensity.compact,
-                                  onPressed: !hasDataInSlot
+                                  // ✨ Disable if empty OR wrong mode
+                                  onPressed: (!hasDataInSlot || !isMatchingMode)
                                       ? null
                                       : () async {
                                           HapticFeedback.lightImpact();
-                                          bool loaded = await provider
-                                              .loadFromSlot(slotId);
                                           if (mounted) Navigator.pop(context);
-                                          if (loaded) {
-                                            showTopToast(
-                                              '📂 Loaded "${savedSlot?.name ?? slotId}"',
-                                              backgroundColor: Colors
-                                                  .green
-                                                  .shade600
-                                                  .withOpacity(0.9),
-                                            );
+
+                                          if (isGpaSlot) {
+                                            final gpaProvider = context
+                                                .read<GpaProvider>();
+                                            bool success = gpaProvider
+                                                .importFromJson(
+                                                  savedSlot.gpaData,
+                                                );
+                                            if (success) {
+                                              showTopToast(
+                                                '📂 GPA Data Loaded!',
+                                                backgroundColor:
+                                                    Colors.green.shade600,
+                                              );
+                                            } else {
+                                              showErrorToast(
+                                                'Failed to load GPA data.',
+                                              );
+                                            }
                                           } else {
-                                            showTopToast(
-                                              '❌ Failed to load data.',
-                                              backgroundColor:
-                                                  Colors.red.shade700,
-                                            );
+                                            bool loaded = await provider
+                                                .loadFromSlot(slotId);
+                                            if (loaded) {
+                                              showTopToast(
+                                                '📂 Attendance Loaded! (Check Home Tab)',
+                                                backgroundColor:
+                                                    Colors.green.shade600,
+                                              );
+                                            } else {
+                                              showErrorToast(
+                                                'Failed to load Attendance data.',
+                                              );
+                                            }
                                           }
                                         },
                                 ),
-                                // Delete Button
                                 IconButton(
                                   icon: const Icon(
                                     Icons.delete_outline_rounded,
@@ -280,7 +352,7 @@ class _SavesModalState extends State<SavesModal> {
                                   tooltip: 'Delete This Save',
                                   color: hasDataInSlot
                                       ? Colors.red.shade400
-                                      : theme.disabledColor,
+                                      : theme.disabledColor.withOpacity(0.3),
                                   iconSize: 20,
                                   visualDensity: VisualDensity.compact,
                                   onPressed: !hasDataInSlot
@@ -290,40 +362,168 @@ class _SavesModalState extends State<SavesModal> {
                                           bool?
                                           confirm = await showDialog<bool>(
                                             context: context,
-                                            builder: (ctx) => AlertDialog(
-                                              title: const Text(
-                                                'Confirm Delete',
+                                            builder: (ctx) => Dialog(
+                                              backgroundColor: isDark
+                                                  ? const Color(0xFF2A1C1C)
+                                                  : Colors.white,
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(24),
                                               ),
-                                              content: Text(
-                                                'Delete save slot "${nameController.text}"?',
-                                              ),
-                                              actions: [
-                                                TextButton(
-                                                  onPressed: () =>
-                                                      Navigator.pop(ctx, false),
-                                                  child: const Text('Cancel'),
+                                              child: Padding(
+                                                padding: const EdgeInsets.all(
+                                                  24.0,
                                                 ),
-                                                TextButton(
-                                                  onPressed: () =>
-                                                      Navigator.pop(ctx, true),
-                                                  child: const Text(
-                                                    'Delete',
-                                                    style: TextStyle(
-                                                      color: Colors.red,
+                                                child: Column(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  children: [
+                                                    // 🔥 Icon
+                                                    Container(
+                                                      padding:
+                                                          const EdgeInsets.all(
+                                                            16,
+                                                          ),
+                                                      decoration: BoxDecoration(
+                                                        color: Colors.redAccent
+                                                            .withOpacity(0.15),
+                                                        shape: BoxShape.circle,
+                                                      ),
+                                                      child: const Icon(
+                                                        Icons
+                                                            .delete_outline_rounded,
+                                                        color: Colors.redAccent,
+                                                        size: 36,
+                                                      ),
                                                     ),
-                                                  ),
+                                                    const SizedBox(height: 20),
+
+                                                    // 🔥 Title
+                                                    Text(
+                                                      'Delete Save?',
+                                                      style: theme
+                                                          .textTheme
+                                                          .titleLarge
+                                                          ?.copyWith(
+                                                            fontWeight:
+                                                                FontWeight.bold,
+                                                          ),
+                                                      textAlign:
+                                                          TextAlign.center,
+                                                    ),
+
+                                                    const SizedBox(height: 12),
+
+                                                    // 🔥 Content
+                                                    Text(
+                                                      'This will permanently delete "${nameController.text}".\n\nYou can’t undo this.',
+                                                      textAlign:
+                                                          TextAlign.center,
+                                                      style: theme
+                                                          .textTheme
+                                                          .bodyMedium
+                                                          ?.copyWith(
+                                                            color:
+                                                                theme.hintColor,
+                                                          ),
+                                                    ),
+
+                                                    const SizedBox(height: 24),
+
+                                                    // 🔥 Buttons
+                                                    Row(
+                                                      children: [
+                                                        Expanded(
+                                                          child: OutlinedButton(
+                                                            onPressed: () =>
+                                                                Navigator.pop(
+                                                                  ctx,
+                                                                  false,
+                                                                ),
+                                                            style: OutlinedButton.styleFrom(
+                                                              padding:
+                                                                  const EdgeInsets.symmetric(
+                                                                    vertical:
+                                                                        14,
+                                                                  ),
+                                                              side: BorderSide(
+                                                                color: theme
+                                                                    .hintColor
+                                                                    .withOpacity(
+                                                                      0.4,
+                                                                    ),
+                                                              ),
+                                                              shape: RoundedRectangleBorder(
+                                                                borderRadius:
+                                                                    BorderRadius.circular(
+                                                                      16,
+                                                                    ),
+                                                              ),
+                                                            ),
+                                                            child: Text(
+                                                              'Cancel',
+                                                              style: TextStyle(
+                                                                color: theme
+                                                                    .hintColor,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .bold,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                        const SizedBox(
+                                                          width: 12,
+                                                        ),
+                                                        Expanded(
+                                                          child: ElevatedButton(
+                                                            onPressed: () =>
+                                                                Navigator.pop(
+                                                                  ctx,
+                                                                  true,
+                                                                ),
+                                                            style: ElevatedButton.styleFrom(
+                                                              backgroundColor:
+                                                                  Colors
+                                                                      .redAccent,
+                                                              foregroundColor:
+                                                                  Colors.white,
+                                                              elevation: 0,
+                                                              padding:
+                                                                  const EdgeInsets.symmetric(
+                                                                    vertical:
+                                                                        14,
+                                                                  ),
+                                                              shape: RoundedRectangleBorder(
+                                                                borderRadius:
+                                                                    BorderRadius.circular(
+                                                                      16,
+                                                                    ),
+                                                              ),
+                                                            ),
+                                                            child: const Text(
+                                                              'Delete',
+                                                              style: TextStyle(
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .bold,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ],
                                                 ),
-                                              ],
+                                              ),
                                             ),
                                           );
                                           if (confirm == true) {
                                             await provider.deleteSlot(slotId);
                                             showTopToast(
                                               '🗑️ Deleted "${nameController.text}"',
-                                              backgroundColor: Colors
-                                                  .red
-                                                  .shade600
-                                                  .withOpacity(0.9),
+                                              backgroundColor:
+                                                  Colors.red.shade600,
                                             );
                                             _refreshSavesList();
                                           }
@@ -345,7 +545,151 @@ class _SavesModalState extends State<SavesModal> {
     );
   }
 
-  // ✨ UI for Locked Premium Slots (Purple Theme)
+  // ✨ GORGEOUS OVERWRITE WARNING DIALOG
+  Future<bool?> _showOverwriteWarning(
+    BuildContext context,
+    bool overwritingGpa,
+    bool isPremium,
+  ) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    final overwrittenType = overwritingGpa ? 'GPA' : 'Attendance';
+    final currentType = widget.isGpaMode ? 'GPA' : 'Attendance';
+
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // ✨ Glowing Warning Icon
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.warning_amber_rounded,
+                  color: Colors.orange,
+                  size: 36,
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // ✨ Title
+              Text(
+                'Overwrite Save?',
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+
+              // ✨ Content
+              Text(
+                'This slot currently holds $overwrittenType data. '
+                'Saving now will permanently replace it with your current $currentType data.',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.hintColor,
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // ✨ MASSIVE PREMIUM UPSELL FOR FREE USERS
+              if (!isPremium) ...[
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx, false); // Close dialog
+                      showPremiumPaywall(context); // Open premium sheet
+                    },
+                    icon: const Icon(
+                      Icons.auto_awesome_rounded,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                    label: const Text(
+                      'Unlock More Slots with Pro',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                        fontSize: 15,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.deepPurpleAccent,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+
+              // ✨ ACTION BUTTONS
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        side: BorderSide(
+                          color: theme.hintColor.withOpacity(0.4),
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      child: Text(
+                        'Cancel',
+                        style: TextStyle(
+                          color: theme.hintColor,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.redAccent,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      child: const Text(
+                        'Overwrite',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildLockedSlot(
     BuildContext context,
     ThemeData theme,
